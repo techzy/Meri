@@ -1,0 +1,26 @@
+{
+  "name": "ai-sales-crm-sync",
+  "version": "1.0.0",
+  "description": "Delta-optimized AI CRM synchronizer: Notion + Gmail + Google Calendar",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "sync:new": "ts-node src/cli.ts new",
+    "sync:daily": "ts-node src/cli.ts daily"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.21.0",
+    "@notionhq/client": "^2.2.15",
+    "dotenv": "^16.4.5",
+    "googleapis": "^144.0.0",
+    "node-cron": "^3.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/node-cron": "^3.0.11",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.5.4"
+  }
+}
