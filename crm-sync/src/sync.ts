@@ -25,16 +25,14 @@ export async function initialBackfill(contact: Contact): Promise<void> {
   const since = new Date();
   since.setMonth(since.getMonth() - config.backfillMonths);
 
-  const [emails, events] = await Promise.all([
-    getEmailsSince(contact.email, since).catch(err => {
-      console.error(`[Backfill] Gmail error for ${contact.name}:`, (err as Error).message);
-      return [];
-    }),
-    getEventsSince(contact.email, since).catch(err => {
-      console.error(`[Backfill] Calendar error for ${contact.name}:`, (err as Error).message);
-      return [];
-    }),
-  ]);
+  const emails = await getEmailsSince(contact.email, since).catch(err => {
+    console.error(`[Backfill] Gmail error for ${contact.name}:`, (err as Error).message);
+    return [];
+  });
+  const events = await getEventsSince(contact.email, since).catch(err => {
+    console.error(`[Backfill] Calendar error for ${contact.name}:`, (err as Error).message);
+    return [];
+  });
 
   console.log(`[Backfill] ${contact.name}: ${emails.length} emails, ${events.length} events`);
 
@@ -59,16 +57,14 @@ export async function deltaUpdate(contact: Contact): Promise<void> {
   const since = new Date(contact.lastSynced);
   const until = new Date();
 
-  const [emails, events] = await Promise.all([
-    getEmailsSince(contact.email, since, until).catch(err => {
-      console.error(`[Delta] Gmail error for ${contact.name}:`, (err as Error).message);
-      return [];
-    }),
-    getEventsSince(contact.email, since, until).catch(err => {
-      console.error(`[Delta] Calendar error for ${contact.name}:`, (err as Error).message);
-      return [];
-    }),
-  ]);
+  const emails = await getEmailsSince(contact.email, since, until).catch(err => {
+    console.error(`[Delta] Gmail error for ${contact.name}:`, (err as Error).message);
+    return [];
+  });
+  const events = await getEventsSince(contact.email, since, until).catch(err => {
+    console.error(`[Delta] Calendar error for ${contact.name}:`, (err as Error).message);
+    return [];
+  });
 
   // Token saver: skip LLM entirely if nothing new
   if (emails.length === 0 && events.length === 0) {
