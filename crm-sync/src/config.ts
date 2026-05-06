@@ -15,7 +15,7 @@ export const config = {
   googleClientSecret: require_env('GOOGLE_CLIENT_SECRET'),
   googleRefreshToken: require_env('GOOGLE_REFRESH_TOKEN'),
   gmailEmail: require_env('GMAIL_EMAIL'),
-  geminiModel: 'gemini-2.0-flash',
-  backfillMonths: 3,
+  geminiModel: 'gemini-2.5-flash-lite',
+  backfillMonths: 1,
   notionRateLimitDelay: 350,
 } as const;

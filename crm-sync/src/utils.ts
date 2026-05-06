@@ -36,7 +36,25 @@ export async function withRetry<T>(
   throw lastError;
 }
 
-// Gemini-specific retry: reads retryDelay from the error, defaults to 30s, max 3 attempts
+// Thrown when the Gemini free-tier *daily* quota is exhausted — retrying within
+// the same day is futile, so the batch loop should abort cleanly.
+export class DailyQuotaExhaustedError extends Error {
+  constructor(message = 'Gemini free-tier daily quota exhausted') {
+    super(message);
+    this.name = 'DailyQuotaExhaustedError';
+  }
+}
+
+function extractErrorText(err: unknown): string {
+  const e = err as Record<string, unknown>;
+  const parts: string[] = [];
+  if (typeof e?.['message'] === 'string') parts.push(e['message']);
+  if (Array.isArray(e?.['errorDetails'])) parts.push(JSON.stringify(e['errorDetails']));
+  return parts.join(' ');
+}
+
+// Gemini-specific retry: reads retryDelay from the error, defaults to 30s, max 3 attempts.
+// Aborts immediately (throws DailyQuotaExhaustedError) on daily-quota violations.
 export async function geminiWithRetry<T>(fn: () => Promise<T>, maxAttempts = 3): Promise<T> {
   let lastError: Error = new Error('Unknown error');
 
@@ -47,6 +65,7 @@ export async function geminiWithRetry<T>(fn: () => Promise<T>, maxAttempts = 3):
       lastError = err instanceof Error ? err : new Error(String(err));
       const e = err as Record<string, unknown>;
 
+      const errorText = extractErrorText(err);
       const msg = typeof e?.['message'] === 'string' ? e['message'] : '';
       const is429 =
         e?.['status'] === 429 ||
@@ -56,7 +75,13 @@ export async function geminiWithRetry<T>(fn: () => Promise<T>, maxAttempts = 3):
 
       if (!is429) throw lastError;
 
-      // Read retryDelay from Google's error details if present
+      // If any quota violation is a *daily* one, retrying today cannot succeed.
+      // Detect via quotaId containing "PerDay" in the QuotaFailure details.
+      if (/PerDay/i.test(errorText)) {
+        throw new DailyQuotaExhaustedError();
+      }
+
+      // Per-minute throttle — read retryDelay from Google's error details if present
       let delayMs = 30_000;
       const details = (e?.['errorDetails'] as Array<Record<string, unknown>>) ?? [];
       for (const detail of details) {
@@ -69,7 +94,7 @@ export async function geminiWithRetry<T>(fn: () => Promise<T>, maxAttempts = 3):
       }
 
       console.warn(
-        `[Gemini] 429 rate limit — waiting ${delayMs / 1000}s before retry (attempt ${attempt + 1}/${maxAttempts})`
+        `[Gemini] 429 per-minute throttle — waiting ${delayMs / 1000}s before retry (attempt ${attempt + 1}/${maxAttempts})`
       );
       await sleep(delayMs);
     }

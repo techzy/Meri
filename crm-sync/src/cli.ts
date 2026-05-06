@@ -1,3 +1,6 @@
+import { setupDailyFileLogging } from './logger';
+setupDailyFileLogging();
+
 import { runDailySync, runNewContactsSync } from './sync';
 
 const command = process.argv[2];

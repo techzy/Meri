@@ -80,6 +80,8 @@ export async function queryContacts(filter?: 'new' | 'existing'): Promise<Contac
           ? plainText(p['Role'].rich_text)
           : p['Role']?.type === 'select'
           ? (p['Role'].select?.name ?? '')
+          : p['Role']?.type === 'multi_select'
+          ? p['Role'].multi_select.map(s => s.name).join(', ')
           : '';
 
       const company =
@@ -270,7 +272,15 @@ export async function updateProperties(
   };
 
   if (props.pipeline) properties['Pipeline'] = { select: { name: props.pipeline } };
-  if (props.role) properties['Role'] = { rich_text: [{ text: { content: props.role } }] };
+  if (props.role) {
+    // Role is a multi_select in this database — split comma-separated values into options
+    const roleOptions = props.role
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean)
+      .map(name => ({ name }));
+    properties['Role'] = { multi_select: roleOptions };
+  }
   if (props.lastContacted) properties['Last contacted'] = { date: { start: props.lastContacted } };
 
   await withRetry(() =>

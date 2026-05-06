@@ -1,3 +1,6 @@
+import { setupDailyFileLogging } from './logger';
+setupDailyFileLogging();
+
 import cron from 'node-cron';
 import { runNewContactsSync, runDailySync } from './sync';
 
