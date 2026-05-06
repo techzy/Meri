@@ -1,5 +1,5 @@
 import { config } from './config';
-import type { Contact } from './types';
+import type { Contact, IMessage } from './types';
 import {
   queryContacts,
   getPageContent,
@@ -9,34 +9,67 @@ import {
 } from './notion';
 import { getEmailsSince } from './gmail';
 import { getEventsSince } from './calendar';
+import { getMessagesSince, FullDiskAccessRequiredError } from './imessage';
 import { generateInitialSummary, generateDeltaUpdate } from './llm';
-import { sleep } from './utils';
+import { sleep, DailyQuotaExhaustedError } from './utils';
+
+// Track Full Disk Access warning so we only print it once per run
+let fdaWarned = false;
+
+function fetchMessagesForContact(
+  contact: Contact,
+  since: Date,
+  until: Date,
+  context: 'Backfill' | 'Delta'
+): IMessage[] {
+  if (!contact.phone) return [];
+  try {
+    return getMessagesSince(contact.phone, since, until);
+  } catch (err) {
+    if (err instanceof FullDiskAccessRequiredError) {
+      if (!fdaWarned) {
+        console.warn(`[iMessage] ${err.message}`);
+        fdaWarned = true;
+      }
+      return [];
+    }
+    console.error(`[${context}] iMessage error for ${contact.name}:`, (err as Error).message);
+    return [];
+  }
+}
 
 // ─── Loop 1: Initial Backfill ────────────────────────────────────────────────
 
 export async function initialBackfill(contact: Contact): Promise<void> {
-  console.log(`[Backfill] ${contact.name} <${contact.email}>`);
+  console.log(`[Backfill] ${contact.name} <${contact.email || contact.phone || 'no contact info'}>`);
 
-  if (!contact.email) {
-    console.warn(`[Backfill] Skipped ${contact.name}: no email address`);
+  if (!contact.email && !contact.phone) {
+    console.warn(`[Backfill] Skipped ${contact.name}: no email or phone`);
     return;
   }
 
   const since = new Date();
   since.setMonth(since.getMonth() - config.backfillMonths);
 
-  const emails = await getEmailsSince(contact.email, since).catch(err => {
-    console.error(`[Backfill] Gmail error for ${contact.name}:`, (err as Error).message);
-    return [];
-  });
-  const events = await getEventsSince(contact.email, since).catch(err => {
-    console.error(`[Backfill] Calendar error for ${contact.name}:`, (err as Error).message);
-    return [];
-  });
+  const emails = contact.email
+    ? await getEmailsSince(contact.email, since).catch(err => {
+        console.error(`[Backfill] Gmail error for ${contact.name}:`, (err as Error).message);
+        return [];
+      })
+    : [];
+  const events = contact.email
+    ? await getEventsSince(contact.email, since).catch(err => {
+        console.error(`[Backfill] Calendar error for ${contact.name}:`, (err as Error).message);
+        return [];
+      })
+    : [];
+  const messages = fetchMessagesForContact(contact, since, new Date(), 'Backfill');
 
-  console.log(`[Backfill] ${contact.name}: ${emails.length} emails, ${events.length} events`);
+  console.log(
+    `[Backfill] ${contact.name}: ${emails.length} emails, ${events.length} events, ${messages.length} iMessages`
+  );
 
-  const llmResult = await generateInitialSummary(contact, emails, events);
+  const llmResult = await generateInitialSummary(contact, emails, events, messages);
 
   await createPageContent(contact.pageId, llmResult);
   await updateProperties(contact.pageId, llmResult.properties, new Date().toISOString());
@@ -47,32 +80,43 @@ export async function initialBackfill(contact: Contact): Promise<void> {
 // ─── Loop 2: Daily Delta Update ──────────────────────────────────────────────
 
 export async function deltaUpdate(contact: Contact): Promise<void> {
-  console.log(`[Delta] ${contact.name} <${contact.email}>`);
+  console.log(`[Delta] ${contact.name} <${contact.email || contact.phone || 'no contact info'}>`);
 
-  if (!contact.email || !contact.lastSynced) {
-    console.warn(`[Delta] Skipped ${contact.name}: missing email or lastSynced`);
+  if (!contact.lastSynced) {
+    console.warn(`[Delta] Skipped ${contact.name}: missing lastSynced (run backfill first)`);
+    return;
+  }
+  if (!contact.email && !contact.phone) {
+    console.warn(`[Delta] Skipped ${contact.name}: no email or phone`);
     return;
   }
 
   const since = new Date(contact.lastSynced);
   const until = new Date();
 
-  const emails = await getEmailsSince(contact.email, since, until).catch(err => {
-    console.error(`[Delta] Gmail error for ${contact.name}:`, (err as Error).message);
-    return [];
-  });
-  const events = await getEventsSince(contact.email, since, until).catch(err => {
-    console.error(`[Delta] Calendar error for ${contact.name}:`, (err as Error).message);
-    return [];
-  });
+  const emails = contact.email
+    ? await getEmailsSince(contact.email, since, until).catch(err => {
+        console.error(`[Delta] Gmail error for ${contact.name}:`, (err as Error).message);
+        return [];
+      })
+    : [];
+  const events = contact.email
+    ? await getEventsSince(contact.email, since, until).catch(err => {
+        console.error(`[Delta] Calendar error for ${contact.name}:`, (err as Error).message);
+        return [];
+      })
+    : [];
+  const messages = fetchMessagesForContact(contact, since, until, 'Delta');
 
-  // Token saver: skip LLM entirely if nothing new
-  if (emails.length === 0 && events.length === 0) {
+  // Token saver: skip LLM entirely if nothing new across any source
+  if (emails.length === 0 && events.length === 0 && messages.length === 0) {
     console.log(`[Delta] No new data for ${contact.name} — skipping`);
     return;
   }
 
-  console.log(`[Delta] ${contact.name}: ${emails.length} emails, ${events.length} events`);
+  console.log(
+    `[Delta] ${contact.name}: ${emails.length} emails, ${events.length} events, ${messages.length} iMessages`
+  );
 
   const pageContent = await getPageContent(contact.pageId);
   const currentActions = pageContent.actionBlocks.map(b => b.text);
@@ -82,7 +126,8 @@ export async function deltaUpdate(contact: Contact): Promise<void> {
     pageContent.summaryText,
     currentActions,
     emails,
-    events
+    events,
+    messages
   );
 
   await updatePageContent(contact.pageId, pageContent, llmResult);
@@ -108,6 +153,12 @@ export async function runNewContactsSync(): Promise<void> {
     try {
       await initialBackfill(contact);
     } catch (err) {
+      if (err instanceof DailyQuotaExhaustedError) {
+        console.warn(
+          '[Sync] Gemini free-tier daily quota exhausted — aborting. Remaining contacts will resume on next run after midnight Pacific.'
+        );
+        break;
+      }
       console.error(`[Sync] Backfill failed for ${contact.name}:`, (err as Error).message);
     }
     await sleep(config.notionRateLimitDelay);
@@ -124,6 +175,12 @@ export async function runDailySync(): Promise<void> {
     try {
       await deltaUpdate(contact);
     } catch (err) {
+      if (err instanceof DailyQuotaExhaustedError) {
+        console.warn(
+          '[Sync] Gemini free-tier daily quota exhausted — aborting. Remaining contacts will resume on next run after midnight Pacific.'
+        );
+        break;
+      }
       console.error(`[Sync] Delta failed for ${contact.name}:`, (err as Error).message);
     }
     await sleep(config.notionRateLimitDelay);

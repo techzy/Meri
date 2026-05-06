@@ -1,7 +1,7 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { config } from './config';
 import { geminiWithRetry, sleep } from './utils';
-import type { Contact, EmailMessage, CalendarEvent, LLMResponse } from './types';
+import type { Contact, EmailMessage, CalendarEvent, IMessage, LLMResponse } from './types';
 
 const genAI = new GoogleGenerativeAI(config.geminiApiKey);
 
@@ -9,6 +9,56 @@ const genAI = new GoogleGenerativeAI(config.geminiApiKey);
 const CHUNK_THRESHOLD = 15_000;
 // Delay between consecutive Gemini calls to stay under free-tier RPM limits
 const INTER_CALL_DELAY_MS = 15_000;
+
+// Hard caps to keep input tokens within Gemini free-tier per-minute limits
+const MAX_EMAILS = 50;
+const MAX_EVENTS = 30;
+const MAX_MESSAGES = 100;
+const MAX_SNIPPET_CHARS = 200;
+const MAX_DESCRIPTION_CHARS = 300;
+const MAX_MESSAGE_CHARS = 100;
+
+function truncate(s: string | undefined, limit: number): string {
+  if (!s) return '';
+  return s.length > limit ? s.slice(0, limit) + '…' : s;
+}
+
+function capEmails(emails: EmailMessage[]): EmailMessage[] {
+  // Keep the most recent N (input order is from Gmail listing — typically newest first)
+  return emails.slice(0, MAX_EMAILS).map(e => ({
+    ...e,
+    snippet: truncate(e.snippet, MAX_SNIPPET_CHARS),
+  }));
+}
+
+function capEvents(events: CalendarEvent[]): CalendarEvent[] {
+  return events.slice(0, MAX_EVENTS).map(e => ({
+    ...e,
+    description: e.description ? truncate(e.description, MAX_DESCRIPTION_CHARS) : undefined,
+  }));
+}
+
+// Privacy filter: replace URLs, addresses, attachment markers; then truncate.
+// Per user choice "Only send if message body is short" — keeps the LLM call
+// useful while limiting how much sensitive iMessage content leaves the device.
+function stripPersonal(text: string): string {
+  return text
+    .replace(/https?:\/\/\S+/gi, '[link]')
+    .replace(
+      /\b\d{1,5}\s+\w+(?:\s+\w+){0,3}\s+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Lane|Ln|Drive|Dr|Court|Ct|Way|Place|Pl|Trail|Tr|Highway|Hwy)\b\.?/gi,
+      '[address]'
+    )
+    .replace(/\[attachment[^\]]*\]/gi, '[attachment]');
+}
+
+function capMessages(messages: IMessage[]): IMessage[] {
+  // Most-recent N. Messages from chat.db come ordered ASC; take the tail.
+  const recent = messages.length > MAX_MESSAGES ? messages.slice(-MAX_MESSAGES) : messages;
+  return recent.map(m => ({
+    ...m,
+    text: truncate(stripPersonal(m.text), MAX_MESSAGE_CHARS),
+  }));
+}
 
 // ─── System prompts ──────────────────────────────────────────────────────────
 
@@ -92,6 +142,17 @@ function formatEvents(events: CalendarEvent[]): string {
     .join('\n---\n');
 }
 
+function formatMessages(messages: IMessage[]): string {
+  if (messages.length === 0) return '(none)';
+  return messages
+    .map(m => {
+      const ts = m.timestamp.toISOString();
+      const sender = m.isFromMe ? 'Me' : 'Them';
+      return `[${ts}] ${sender}: ${m.text}`;
+    })
+    .join('\n');
+}
+
 // ─── Month grouping ──────────────────────────────────────────────────────────
 
 function groupByMonth<T>(items: T[], getDate: (item: T) => string): Map<string, T[]> {
@@ -147,8 +208,13 @@ export async function generateDeltaUpdate(
   currentSummary: string,
   currentActions: string[],
   emails: EmailMessage[],
-  events: CalendarEvent[]
+  events: CalendarEvent[],
+  messages: IMessage[] = []
 ): Promise<LLMResponse> {
+  const cappedEmails = capEmails(emails);
+  const cappedEvents = capEvents(events);
+  const cappedMessages = capMessages(messages);
+
   const today = new Date().toISOString().split('T')[0];
 
   const userContent = `Contact: ${contact.name} <${contact.email}>
@@ -162,10 +228,13 @@ ${currentSummary || '(none)'}
 ${currentActions.length > 0 ? currentActions.map(a => `• ${a}`).join('\n') : '(none)'}
 
 --- NEW EMAILS ---
-${formatEmails(emails)}
+${formatEmails(cappedEmails)}
 
 --- NEW CALENDAR EVENTS ---
-${formatEvents(events)}`;
+${formatEvents(cappedEvents)}
+
+--- NEW IMESSAGES (sanitized: URLs/addresses redacted, capped to ${MAX_MESSAGE_CHARS} chars each) ---
+${formatMessages(cappedMessages)}`;
 
   const text = await callGemini(DELTA_SYSTEM, userContent, 1024);
   return JSON.parse(text) as LLMResponse;
@@ -174,14 +243,30 @@ ${formatEvents(events)}`;
 export async function generateInitialSummary(
   contact: Contact,
   emails: EmailMessage[],
-  events: CalendarEvent[]
+  events: CalendarEvent[],
+  messages: IMessage[] = []
 ): Promise<LLMResponse> {
+  const cappedEmails = capEmails(emails);
+  const cappedEvents = capEvents(events);
+  const cappedMessages = capMessages(messages);
+
+  if (
+    emails.length > cappedEmails.length ||
+    events.length > cappedEvents.length ||
+    messages.length > cappedMessages.length
+  ) {
+    console.log(
+      `[LLM] Capped backfill data: emails ${emails.length}→${cappedEmails.length}, events ${events.length}→${cappedEvents.length}, messages ${messages.length}→${cappedMessages.length}`
+    );
+  }
+
   const today = new Date().toISOString().split('T')[0];
   const header = `Contact: ${contact.name} <${contact.email}>\nCompany: ${contact.company || 'Unknown'}\nToday: ${today}\n\n`;
 
   const fullData =
-    `--- HISTORICAL EMAILS ---\n${formatEmails(emails)}\n\n` +
-    `--- HISTORICAL CALENDAR EVENTS ---\n${formatEvents(events)}`;
+    `--- HISTORICAL EMAILS ---\n${formatEmails(cappedEmails)}\n\n` +
+    `--- HISTORICAL CALENDAR EVENTS ---\n${formatEvents(cappedEvents)}\n\n` +
+    `--- HISTORICAL IMESSAGES (sanitized) ---\n${formatMessages(cappedMessages)}`;
 
   // Single call if data fits comfortably within free-tier limits
   if ((header + fullData).length <= CHUNK_THRESHOLD) {
@@ -192,23 +277,32 @@ export async function generateInitialSummary(
   // ── Chunked path: one Gemini call per month, then a final combine call ──
   console.log(`[LLM] Data exceeds ${CHUNK_THRESHOLD} chars — chunking by month`);
 
-  const emailsByMonth = groupByMonth(emails, e => e.date);
-  const eventsByMonth = groupByMonth(events, e => e.start);
+  const emailsByMonth = groupByMonth(cappedEmails, e => e.date);
+  const eventsByMonth = groupByMonth(cappedEvents, e => e.start);
+  const messagesByMonth = groupByMonth(cappedMessages, m => m.timestamp.toISOString());
 
-  const allMonths = [...new Set([...emailsByMonth.keys(), ...eventsByMonth.keys()])].sort();
+  const allMonths = [
+    ...new Set([
+      ...emailsByMonth.keys(),
+      ...eventsByMonth.keys(),
+      ...messagesByMonth.keys(),
+    ]),
+  ].sort();
   const monthlyNotes: string[] = [];
 
   for (let i = 0; i < allMonths.length; i++) {
     const month = allMonths[i];
     const monthEmails = emailsByMonth.get(month) ?? [];
     const monthEvents = eventsByMonth.get(month) ?? [];
+    const monthMessages = messagesByMonth.get(month) ?? [];
 
     const chunkContent =
       `${header}Month: ${month}\n\n` +
       `Emails:\n${formatEmails(monthEmails)}\n\n` +
-      `Calendar Events:\n${formatEvents(monthEvents)}`;
+      `Calendar Events:\n${formatEvents(monthEvents)}\n\n` +
+      `iMessages (sanitized):\n${formatMessages(monthMessages)}`;
 
-    console.log(`[LLM] Chunk ${i + 1}/${allMonths.length}: ${month} (${monthEmails.length} emails, ${monthEvents.length} events)`);
+    console.log(`[LLM] Chunk ${i + 1}/${allMonths.length}: ${month} (${monthEmails.length} emails, ${monthEvents.length} events, ${monthMessages.length} messages)`);
 
     const notes = await callGeminiText(CHUNK_SYSTEM, chunkContent, 512);
     monthlyNotes.push(`=== ${month} ===\n${notes.trim()}`);

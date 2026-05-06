@@ -44,6 +44,12 @@ export interface CalendarEvent {
   description?: string;
 }
 
+export interface IMessage {
+  timestamp: Date;
+  isFromMe: boolean;
+  text: string;
+}
+
 export interface PageContent {
   summaryBlockId: string | null;
   summaryText: string;

@@ -49,11 +49,12 @@ cat > "$PLIST_PATH" <<PLIST
     <key>KeepAlive</key>
     <true/>
 
-    <!-- Logs -->
+    <!-- Fallback log for hard crashes that bypass our daily logger.
+         Routine output goes to logs/MM-DD-YYYY.log via src/logger.ts -->
     <key>StandardOutPath</key>
-    <string>${LOG_DIR}/crm-sync.log</string>
+    <string>${LOG_DIR}/launchd-fallback.log</string>
     <key>StandardErrorPath</key>
-    <string>${LOG_DIR}/crm-sync-error.log</string>
+    <string>${LOG_DIR}/launchd-fallback.log</string>
 </dict>
 </plist>
 PLIST
@@ -67,6 +68,23 @@ launchctl load "$PLIST_PATH"
 echo ""
 echo "✓ Service installed and running."
 echo ""
-echo "  Logs:    tail -f $LOG_DIR/crm-sync.log"
+echo "  Logs:    tail -f $LOG_DIR/\$(date +%m-%d-%Y).log"
 echo "  Stop:    launchctl unload $PLIST_PATH"
 echo "  Remove:  bash $SCRIPT_DIR/uninstall-service.sh"
+echo ""
+echo "════════════════════════════════════════════════════════════════════"
+echo " ONE-TIME SETUP (required for iMessage reading)"
+echo "════════════════════════════════════════════════════════════════════"
+echo ""
+echo " To read messages from ~/Library/Messages/chat.db, the running Node"
+echo " binary needs Full Disk Access. Without it, the sync still runs but"
+echo " skips the iMessage source for every contact."
+echo ""
+echo "   1. Open: System Settings → Privacy & Security → Full Disk Access"
+echo "   2. Click '+' and add this binary:"
+echo "        $NODE_BIN"
+echo "   3. Toggle it ON"
+echo "   4. Restart the service:"
+echo "        launchctl unload $PLIST_PATH && launchctl load $PLIST_PATH"
+echo ""
+echo "════════════════════════════════════════════════════════════════════"
