@@ -271,7 +271,8 @@ export async function updateProperties(
     'Last Synced': { date: { start: lastSynced } },
   };
 
-  if (props.pipeline) properties['Pipeline'] = { select: { name: props.pipeline } };
+  // Pipeline is intentionally NOT written here — it's managed manually by the user.
+  // Even if the LLM hallucinates a 'pipeline' field, we never propagate it to Notion.
   if (props.role) {
     // Role is a multi_select in this database — split comma-separated values into options
     const roleOptions = props.role

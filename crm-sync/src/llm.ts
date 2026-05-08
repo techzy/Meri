@@ -69,7 +69,6 @@ Analyze the new data against the existing context and return ONLY a valid JSON o
 The JSON must have these exact keys:
 {
   "properties": {
-    "pipeline": "<stage name>",
     "role": "<contact's job title>",
     "company": "<company name>",
     "lastContacted": "<YYYY-MM-DD>"
@@ -86,7 +85,8 @@ The JSON must have these exact keys:
 Rules:
 - summary: bullet points, integrate new context naturally, under 150 words
 - recommendedActions: remove completed items, add new ones (pricing, demos, follow-ups)
-- dailyNote: only for genuinely new activity; set to null if no new data`;
+- dailyNote: only for genuinely new activity; set to null if no new data
+- Pipeline stage is managed manually by the user — do NOT include a "pipeline" field in your output, ever`;
 
 const BACKFILL_SYSTEM = `You are an expert sales assistant building an initial CRM record from historical communication data.
 
@@ -94,7 +94,6 @@ Return ONLY a valid JSON object — no markdown, no code fences.
 
 {
   "properties": {
-    "pipeline": "<stage name>",
     "role": "<contact's job title>",
     "company": "<company name>",
     "lastContacted": "<YYYY-MM-DD>"
@@ -102,7 +101,9 @@ Return ONLY a valid JSON object — no markdown, no code fences.
   "summary": "<concise bulleted relationship summary under 150 words>",
   "recommendedActions": ["<action 1>", "<action 2>"],
   "dailyNote": null
-}`;
+}
+
+Pipeline stage is managed manually by the user — do NOT include a "pipeline" field in your output, ever.`;
 
 const CHUNK_SYSTEM = `You are a sales analyst. Summarize the relationship activity from the emails and events below as concise bullet notes — key facts only, no fluff. Plain text, no JSON.`;
 
@@ -112,7 +113,6 @@ Return ONLY a valid JSON object — no markdown, no code fences.
 
 {
   "properties": {
-    "pipeline": "<stage name>",
     "role": "<contact's job title>",
     "company": "<company name>",
     "lastContacted": "<YYYY-MM-DD>"
@@ -120,7 +120,9 @@ Return ONLY a valid JSON object — no markdown, no code fences.
   "summary": "<concise bulleted relationship summary under 150 words>",
   "recommendedActions": ["<action 1>", "<action 2>"],
   "dailyNote": null
-}`;
+}
+
+Pipeline stage is managed manually by the user — do NOT include a "pipeline" field in your output, ever.`;
 
 // ─── Formatters ──────────────────────────────────────────────────────────────
 

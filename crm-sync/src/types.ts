@@ -11,8 +11,9 @@ export interface Contact {
 }
 
 export interface LLMResponse {
+  // Note: 'pipeline' is intentionally omitted — Pipeline stage is managed
+  // manually in Notion and the LLM must not propose changes to it.
   properties: {
-    pipeline: string;
     role: string;
     company: string;
     lastContacted: string;
