@@ -204,7 +204,10 @@ export function getMessagesSince(
 
     const handleIds = handleRows.map(r => r.ROWID);
 
-    // 2. 1-on-1 messages only — no group-chat clauses
+    // 2. 1-on-1 messages, OUTGOING ONLY — privacy filter at the SQL level
+    //    so the contact's replies are never decoded, held in memory, or sent
+    //    to the LLM. Filtering here (not in TS) guarantees any future caller
+    //    of this query inherits the privacy property.
     const idPlaceholders = handleIds.map(() => '?').join(',');
     const sinceNs = dateToAppleNanos(since);
     const untilNs = dateToAppleNanos(until);
@@ -214,6 +217,7 @@ export function getMessagesSince(
         `SELECT m.date AS date, m.is_from_me AS is_from_me, m.text AS text, m.attributedBody AS attributedBody
          FROM message m
          WHERE m.handle_id IN (${idPlaceholders})
+           AND m.is_from_me = 1
            AND m.date > ? AND m.date <= ?
          ORDER BY m.date ASC`
       )

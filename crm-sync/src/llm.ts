@@ -235,7 +235,7 @@ ${formatEmails(cappedEmails)}
 --- NEW CALENDAR EVENTS ---
 ${formatEvents(cappedEvents)}
 
---- NEW IMESSAGES (sanitized: URLs/addresses redacted, capped to ${MAX_MESSAGE_CHARS} chars each) ---
+--- NEW IMESSAGES SENT BY ME (privacy-filtered: only my outgoing messages — the contact's replies are NOT included; sanitized: URLs/addresses redacted, capped to ${MAX_MESSAGE_CHARS} chars each) ---
 ${formatMessages(cappedMessages)}`;
 
   const text = await callGemini(DELTA_SYSTEM, userContent, 1024);
@@ -268,7 +268,7 @@ export async function generateInitialSummary(
   const fullData =
     `--- HISTORICAL EMAILS ---\n${formatEmails(cappedEmails)}\n\n` +
     `--- HISTORICAL CALENDAR EVENTS ---\n${formatEvents(cappedEvents)}\n\n` +
-    `--- HISTORICAL IMESSAGES (sanitized) ---\n${formatMessages(cappedMessages)}`;
+    `--- HISTORICAL IMESSAGES SENT BY ME (privacy-filtered: only my outgoing, no contact replies; sanitized) ---\n${formatMessages(cappedMessages)}`;
 
   // Single call if data fits comfortably within free-tier limits
   if ((header + fullData).length <= CHUNK_THRESHOLD) {
@@ -302,7 +302,7 @@ export async function generateInitialSummary(
       `${header}Month: ${month}\n\n` +
       `Emails:\n${formatEmails(monthEmails)}\n\n` +
       `Calendar Events:\n${formatEvents(monthEvents)}\n\n` +
-      `iMessages (sanitized):\n${formatMessages(monthMessages)}`;
+      `iMessages SENT BY ME (privacy-filtered, no contact replies; sanitized):\n${formatMessages(monthMessages)}`;
 
     console.log(`[LLM] Chunk ${i + 1}/${allMonths.length}: ${month} (${monthEmails.length} emails, ${monthEvents.length} events, ${monthMessages.length} messages)`);
 
