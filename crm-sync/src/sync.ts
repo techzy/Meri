@@ -188,3 +188,26 @@ export async function runDailySync(): Promise<void> {
 
   console.log('[Sync] Daily sync complete');
 }
+
+/**
+ * Force-flush: process EVERY contact in one pass.
+ * - First runs the backfill loop for any contact missing Last Synced
+ *   (new contacts, including phone-only ones)
+ * - Then runs the delta loop for every existing contact, checking each
+ *   for new emails / events / iMessages since their Last Synced timestamp
+ *
+ * The token-saver still applies in the delta loop (skips LLM if nothing
+ * is new) — that's not a wasted call, it's the system correctly reporting
+ * "no change". If you actually want to regenerate a summary that has no
+ * new data, clear the contact's Last Synced in Notion to force a backfill.
+ */
+export async function runFullSync(): Promise<void> {
+  const startedAt = new Date();
+  console.log(`[Sync] ═══ Full sync started at ${startedAt.toISOString()} ═══`);
+  console.log('[Sync] Phase 1/2: backfilling new contacts...');
+  await runNewContactsSync();
+  console.log('[Sync] Phase 2/2: delta-checking existing contacts...');
+  await runDailySync();
+  const elapsedSec = Math.round((Date.now() - startedAt.getTime()) / 1000);
+  console.log(`[Sync] ═══ Full sync complete in ${elapsedSec}s ═══`);
+}
