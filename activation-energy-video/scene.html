@@ -1,0 +1,373 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+html,body{margin:0;background:#ECEDEA;overflow:hidden}
+svg{display:block;font-family:'Inter',sans-serif}
+</style></head>
+<body>
+<svg id="stage" xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080"></svg>
+<svg width="0" height="0" style="position:absolute"><path id="probe" d=""/></svg>
+<script>
+const CAP = /*CAPTIONS*/null;
+const C = {bg:'#ECEDEA', line:'#85878C', dark:'#15161A', mid:'#6E7075', faint:'#C6C7C5', red:'#D8455F', panel:'#E2E3E0'};
+const SW = 2.6;
+const L = CAP.lines;
+const clamp=(x,a=0,b=1)=>Math.min(b,Math.max(a,x));
+const lerp=(a,b,p)=>a+(b-a)*p;
+const ease=p=>{p=clamp(p);return p<.5?4*p*p*p:1-Math.pow(-2*p+2,3)/2};
+const easeOut=p=>1-Math.pow(1-clamp(p),3);
+const easeIn=p=>Math.pow(clamp(p),3);
+const pr=(t,a,b)=>clamp((t-a)/(b-a));
+const s=i=>L[i].s, e=i=>L[i].e;
+const w=(i,k)=>L[i].words[k].s;           // start of k-th word of line i
+const VOICE_END = L[L.length-1].e;
+const END_CARD = VOICE_END + 2.6;
+const TOTAL = END_CARD + 3.6;
+
+// ---------- primitives ----------
+const a=(v)=>v===undefined?1:v;
+function ln(x1,y1,x2,y2,o={}){return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${o.c||C.line}" stroke-width="${o.w||SW}" stroke-linecap="round" opacity="${a(o.a)}" ${o.dash?`stroke-dasharray="${o.dash}"`:''}/>`}
+function path(d,o={}){const p=o.p===undefined?1:clamp(o.p);if(p<=0)return'';
+  return `<path d="${d}" fill="${o.fill||'none'}" stroke="${o.c||C.line}" stroke-width="${o.w||SW}" stroke-linecap="round" stroke-linejoin="round" opacity="${a(o.a)}" ${o.dash?`stroke-dasharray="${o.dash}"`:(p<1?`pathLength="1" stroke-dasharray="1 2" stroke-dashoffset="${1-p}"`:'')}/>`}
+function circ(x,y,r,o={}){return `<circle cx="${x}" cy="${y}" r="${r}" fill="${o.fill||'none'}" stroke="${o.c||C.line}" stroke-width="${o.w===undefined?SW:o.w}" opacity="${a(o.a)}"/>`}
+function rect(x,y,wd,h,o={}){return `<rect x="${x}" y="${y}" width="${wd}" height="${h}" rx="${o.rx||0}" fill="${o.fill||'none'}" stroke="${o.c||C.line}" stroke-width="${o.w===undefined?SW:o.w}" opacity="${a(o.a)}"/>`}
+function txt(x,y,str,o={}){return `<text x="${x}" y="${y}" font-size="${o.size||30}" font-weight="${o.weight||400}" fill="${o.c||C.dark}" text-anchor="${o.anchor||'middle'}" opacity="${a(o.a)}" ${o.italic?'font-style="italic"':''} letter-spacing="${o.ls||0}">${str}</text>`}
+function arrow(x1,y1,x2,y2,o={}){const ang=Math.atan2(y2-y1,x2-x1),h=o.head||16;
+  const p=o.p===undefined?1:clamp(o.p); if(p<=0)return''; const ex=lerp(x1,x2,p), ey=lerp(y1,y2,p);
+  return ln(x1,y1,ex,ey,o)+ln(ex,ey,ex-h*Math.cos(ang-.45),ey-h*Math.sin(ang-.45),o)+ln(ex,ey,ex-h*Math.cos(ang+.45),ey-h*Math.sin(ang+.45),o)}
+function grp(alpha,inner,tf){return alpha<=0?'':`<g opacity="${clamp(alpha)}" ${tf?`transform="${tf}"`:''}>${inner}</g>`}
+function ball(x,y,r,rot,o={}){const c=o.c||C.line;return circ(x,y,r,{c,fill:C.bg,a:o.a})+ln(x,y,x+Math.cos(rot)*r*.62,y+Math.sin(rot)*r*.62,{c,a:o.a})}
+
+// stick figure. (x,y)=feet centre. k=scale. arms: hand offsets from shoulder in units of k.
+function stick(x,y,k,o={}){
+  const c=o.c||C.line, hr=30*k, legH=110*k, bodyH=120*k;
+  const hipY=y-legH, neckY=hipY-bodyH, headY=neckY-hr, shY=neckY+26*k;
+  const lean=(o.lean||0)*k; const hx=x+lean;           // head/shoulder shift when leaning
+  const ph=o.walk||0, sp=26*k;
+  const lf=x-sp+Math.sin(ph)*18*k, rf=x+sp-Math.sin(ph)*18*k;
+  const aL=o.armL||[-46,92], aR=o.armR||[46,92];
+  const arm=(h)=>{const ex=hx+h[0]*k, ey=shY+h[1]*k, mx=(hx+ex)/2+(h[0]>0?1:-1)*10*k*(Math.abs(h[1])>40?1:0), my=(shY+ey)/2-14*k;
+    return path(`M${hx} ${shY} Q${mx} ${my} ${ex} ${ey}`,{c})};
+  let g='';
+  g+=ln(x,hipY,lf,y,{c})+ln(x,hipY,rf,y,{c});
+  g+=ln(x,hipY,hx,neckY,{c});
+  g+=arm(aL)+arm(aR);
+  g+=circ(hx,headY,hr,{c,fill:C.bg});
+  if(o.face!==false){
+    const look=(o.look||0)*5*k;
+    g+=circ(hx-10*k+look,headY-4*k,3.6*k,{c,fill:c,w:0})+circ(hx+10*k+look,headY-4*k,3.6*k,{c,fill:c,w:0});
+    const m=o.mood===undefined?1:o.mood; // 1 smile, 0 flat, -1 strain
+    g+=path(`M${hx-10*k+look} ${headY+11*k} Q${hx+look} ${headY+11*k+9*k*m} ${hx+10*k+look} ${headY+11*k}`,{c,w:SW*.9});
+  }
+  return grp(a(o.a),g);
+}
+function label(str,alpha,o={}){return txt(o.x||960,o.y||190,str,{size:o.size||44,weight:500,c:C.dark,a:alpha})}
+function clock(x,y,r,alpha,strike){let g=circ(x,y,r)+ln(x,y,x,y-r*.6)+ln(x,y,x+r*.42,y+r*.12);
+  if(strike>0)g+=ln(x-r*1.25,y+r*1.25,lerp(x-r*1.25,x+r*1.25,strike),lerp(y+r*1.25,y-r*1.25,strike),{c:C.red,w:4});return grp(alpha,g)}
+const probe=document.getElementById('probe');
+function pointOn(d,p){probe.setAttribute('d',d);const len=probe.getTotalLength();const q=probe.getPointAtLength(len*clamp(p));const q2=probe.getPointAtLength(Math.min(len,len*clamp(p)+1));return {x:q.x,y:q.y,ang:Math.atan2(q2.y-q.y,q2.x-q.x),len}}
+
+// ---------- compound interest ----------
+const V=n=>25000*Math.pow(1.08,n)+6000*(Math.pow(1.08,n)-1)/0.08;
+function yearAt(val){let lo=0,hi=60;for(let i=0;i<50;i++){const m=(lo+hi)/2;V(m)<val?lo=m:hi=m}return lo}
+const Y400=yearAt(400000), Y800=yearAt(800000);
+function graph(gx,gy,gw,gh,maxN,maxV,n1,o={}){
+  const X=n=>gx+gw*n/maxN, Yv=v=>gy-gh*v/maxV; let g='';
+  const ap=o.axes===undefined?1:o.axes;
+  g+=path(`M${gx} ${gy-gh-20} L${gx} ${gy} L${gx+gw+20} ${gy}`,{p:ap});
+  const pts=(from,to)=>{let d='';for(let n=from;n<=to+1e-6;n+=0.25){d+=(d?'L':'M')+X(n).toFixed(1)+' '+Yv(V(n)).toFixed(1)}if(to>from){d+='L'+X(to).toFixed(1)+' '+Yv(V(to)).toFixed(1)}return d};
+  const split=o.split===undefined?maxN:o.split;
+  if(n1>0) g+=path(pts(0,Math.min(n1,split)),{c:C.dark,w:4});
+  if(n1>split) g+=path(pts(split,n1),{c:C.red,w:5});
+  return {g,X,Yv};
+}
+
+// ---------- scenes ----------
+function sceneHook(t){
+  const gx=520,gy=800,gw=880,gh=560,maxN=30,maxV=950000;
+  const t21=w(0,4), tEnd=e(0);
+  const n1 = t<tEnd ? lerp(0,Y400,ease(pr(t,0.05,tEnd-0.15))) : lerp(Y400,Y800,easeOut(pr(t,tEnd+0.35,tEnd+0.95)));
+  const G=graph(gx,gy,gw,gh,maxN,maxV,n1,{split:Y400,axes:pr(t,0,0.35)});
+  let g=G.g;
+  const p1=pr(t,tEnd-0.2,tEnd+0.05);
+  if(p1>0){const x=G.X(Y400),y=G.Yv(400000);
+    g+=ln(gx,y,x,y,{dash:'5 9',a:p1})+ln(x,y,x,gy,{dash:'5 9',a:p1})+circ(x,y,9,{fill:C.dark,c:C.dark,a:p1});
+    g+=txt(gx-22,y+10,'$400k',{anchor:'end',size:30,c:C.mid,a:p1});
+    g+=txt((gx+x)/2,gy+62,'21 years',{size:46,weight:600,a:p1});
+    g+=path(`M${gx+6} ${gy+18} L${x-6} ${gy+18}`,{a:p1,c:C.dark,w:3});
+  }
+  const p2=pr(t,tEnd+0.85,tEnd+1.0);
+  if(p2>0){const x=G.X(Y800),y=G.Yv(800000),x4=G.X(Y400);
+    g+=ln(gx,y,x,y,{dash:'5 9',a:p2})+ln(x,y,x,gy,{dash:'5 9',a:p2})+circ(x,y,10,{fill:C.red,c:C.red,a:p2});
+    g+=txt(gx-22,y+10,'$800k',{anchor:'end',size:30,c:C.mid,a:p2});
+    g+=txt((x4+x)/2,gy+62,'8 years',{size:46,weight:700,c:C.red,a:p2});
+    g+=path(`M${x4+6} ${gy+18} L${x-6} ${gy+18}`,{a:p2,c:C.red,w:4});
+    g+=txt(x+34,y-22,'the next $400k',{anchor:'start',size:34,weight:600,c:C.red,a:p2});
+  }
+  return g;
+}
+function sceneThesis(t){
+  const gy=720; let g=ln(360,gy,1560,gy,{a:pr(t,s(1)-.2,s(1)+.2)});
+  const tv=w(5,1), roll=easeIn(pr(t,tv,tv+1.1));
+  const bx=960+roll*1100, rot=(bx-960)/52;
+  const push=ease(pr(t,s(2),s(2)+.5))*(1-pr(t,tv,tv+.3));
+  g+=stick(760,gy,1,{armR:[lerp(46,118,push),lerp(92,40,push)],lean:push*26,look:1,mood:lerp(1,-0.4,push)+pr(t,tv,tv+.4)*1.4});
+  g+=ball(bx,gy-52,52,rot);
+  const pa=pr(t,s(2),s(2)+.3)*(1-pr(t,tv-.1,tv+.2));
+  g+=arrow(880,gy-190,1010,gy-190,{c:C.red,w:4,a:pa,p:pr(t,s(2),s(2)+.4)});
+  g+=txt(945,gy-214,'activation energy',{size:32,c:C.red,weight:500,a:pa});
+  g+=clock(1300,400,54,pr(t,w(3,2),w(3,2)+.25)*(1-pr(t,s(5)-.1,s(5)+.2)),ease(pr(t,w(3,4),w(3,4)+.35)));
+  const pv=pr(t,tv,tv+.25);
+  for(let i=0;i<3;i++) g+=ln(bx-80-i*46,gy-80+i*26,bx-150-i*46,gy-80+i*26,{a:pv*(1-i*.25)*clamp(roll*3)});
+  g+=txt(1180,gy-214,'escape velocity',{size:36,c:C.red,weight:600,a:pv});
+  return g;
+}
+const HILL='M300 590 L540 590 C 740 590, 780 300, 960 300 C 1140 300, 1190 740, 1380 740 L1620 740';
+function sceneChem(t){
+  let g=label('Chemistry',pr(t,w(7,2)-.1,w(7,2)+.15));
+  g+=path(HILL,{p:ease(pr(t,s(6),s(7)+.4)),c:C.dark,w:3.4});
+  const la=pr(t,s(8),s(8)+.3);
+  g+=txt(420,640,'reactants',{size:28,c:C.mid,a:la})+txt(1500,790,'products',{size:28,c:C.mid,a:la});
+  // ball: 0 start .. peak ~0.5
+  const PEAK=0.497;
+  let p;
+  if(t<s(11)) p=lerp(0.12,PEAK,ease(pr(t,s(9),e(10)+.1)));
+  else p=lerp(PEAK,1.0,easeIn(pr(t,s(12)-.1,e(13)-.25)));
+  const q=pointOn(HILL,p), r=24;
+  const nx=Math.sin(q.ang), ny=-Math.cos(q.ang);
+  g+=grp(pr(t,s(8)+.2,s(8)+.5),ball(q.x+nx*r,q.y+ny*r,r,p*q.len/r,{c:C.dark}));
+  const aa=pr(t,w(10,2),w(10,2)+.25);
+  if(aa>0){ g+=ln(560,590,1060,590,{dash:'5 9',a:aa});
+    g+=arrow(1000,584,1000,318,{c:C.red,w:4,p:ease(pr(t,w(10,2),w(10,2)+.5))})+arrow(1000,560,1000,584,{c:C.red,w:4,a:aa});
+    g+=txt(972,470,'activation',{anchor:'end',size:30,c:C.red,weight:500,a:aa})+txt(972,508,'energy',{anchor:'end',size:30,c:C.red,weight:500,a:aa}); }
+  return g;
+}
+function scenePush(t){
+  const gy=740; let g=label('Physics',pr(t,s(14)-.05,s(14)+.2))+ln(260,gy,1660,gy);
+  const hard=pr(t,s(15),s(17)-.05), easy=ease(pr(t,s(17)+.1,e(17)+.5));
+  const jit=(t>s(15)&&t<s(17))?Math.sin(t*46)*3:0;
+  const off=hard*46+jit+easy*640;
+  const strain=clamp(pr(t,s(15),s(15)+.3)-easy*1.2);
+  const fx=520+off, bx=fx+lerp(128,112,strain);
+  g+=stick(fx,gy,1,{armR:[lerp(92,112,strain),lerp(56,34,strain)],armL:[lerp(60,98,strain),lerp(80,58,strain)],lean:lerp(8,40,strain),walk:off/22,look:1,mood:lerp(1,-1,strain)});
+  g+=rect(bx,gy-170,170,170,{fill:C.panel,c:C.line});
+  const aLen=lerp(70,250,strain);
+  g+=arrow(fx-60-aLen,gy-300,fx-60,gy-300,{c:C.red,w:lerp(3,6,strain),head:lerp(14,22,strain),a:pr(t,s(15),s(15)+.25)});
+  g+=txt(fx-60-aLen/2,gy-324,easy>.3?'small push':'big push',{size:30,c:C.red,weight:500,a:pr(t,s(15),s(15)+.25)});
+  for(let i=0;i<2;i++) g+=path(`M${fx+lerp(8,40,strain)+34+i*16} ${gy-300-i*14} q8 -14 16 -22`,{a:strain*.9,w:2});
+  for(let i=0;i<3;i++) g+=ln(fx-90-i*30,gy-60-i*40,fx-170-i*30,gy-60-i*40,{a:easy*(1-pr(t,e(17)+.2,e(17)+.5))*.8});
+  return g;
+}
+function car(x,y,rot){const bd=`M${x-150} ${y-40} L${x-150} ${y-84} Q${x-148} ${y-98} ${x-130} ${y-100} L${x-92} ${y-104} L${x-52} ${y-152} Q${x-44} ${y-160} ${x-30} ${y-160} L${x+48} ${y-160} Q${x+62} ${y-160} ${x+72} ${y-150} L${x+112} ${y-104} L${x+150} ${y-94} Q${x+166} ${y-90} ${x+166} ${y-74} L${x+166} ${y-40} Z`;
+  let g=path(bd,{fill:C.panel})+path(`M${x-74} ${y-106} L${x-42} ${y-144} L${x+4} ${y-144} L${x+4} ${y-106} Z`)+path(`M${x+18} ${y-106} L${x+18} ${y-144} L${x+56} ${y-144} L${x+90} ${y-106} Z`);
+  for(const wx of [x-88,x+98]){g+=circ(wx,y-36,36,{fill:C.bg})+circ(wx,y-36,12)+ln(wx,y-36,wx+Math.cos(rot)*34,y-36+Math.sin(rot)*34)+ln(wx,y-36,wx-Math.cos(rot)*34,y-36-Math.sin(rot)*34)}
+  return g}
+function sceneCar(t){
+  const gy=740; let g=label('Physics',1)+ln(260,gy,1660,gy);
+  const fast=easeIn(pr(t,s(20)-.1,e(20)+.6));
+  const x=520+pr(t,s(18),s(20))*110+fast*1500;
+  g+=car(x,gy,x/36);
+  const burn = t<s(20)-.1 ? lerp(1,5,ease(pr(t,w(18,4),w(18,6)+.2))) : lerp(5,1,ease(pr(t,s(20),w(20,5)+.2)));
+  const mx=820,my=330;
+  g+=txt(mx-24,my+34,'gas',{anchor:'end',size:34,c:C.mid});
+  for(let i=0;i<5;i++){const on=clamp(burn-i);g+=rect(mx+i*64,my,50,46,{rx:6,c:on>0.5?C.red:C.faint,fill:on>0.5?C.red:'none',a:1})}
+  g+=txt(mx+160,my+100,t<s(20)-.1?'starting':'cruising',{size:30,c:C.dark,a:pr(t,s(19),s(19)+.2)});
+  for(let i=0;i<4;i++) g+=ln(x-190-i*40,gy-50-i*30,x-320-i*40,gy-50-i*30,{a:fast>0.02?.8:0});
+  const puff=pr(t,s(19),s(20));
+  for(let i=0;i<3;i++){const pp=(puff*2.2+i*.33)%1; g+=circ(x-176-pp*70,gy-48-pp*30,8+pp*14,{a:(t>s(19)&&t<s(20))?(1-pp)*.9:0,w:2})}
+  return g;
+}
+function bubble(x,y,wd,h,alpha,flip,lines=2){let g=rect(x-wd/2,y-h,wd,h,{rx:16,fill:C.bg});
+  const tx=x+(flip?wd*.22:-wd*.22);g+=path(`M${tx-10} ${y-1} L${tx+(flip?16:-16)} ${y+20} L${tx+12} ${y-1}`,{fill:C.bg});
+  for(let i=0;i<lines;i++) g+=ln(x-wd/2+18,y-h+22+i*18,x+wd/2-18-(i==lines-1?wd*.25:0),y-h+22+i*18,{c:C.faint,w:4});
+  return grp(alpha,g)}
+function sceneRel(t){
+  const gy=760; let g=label('Relationships',pr(t,s(21)-.05,s(21)+.2)*(1-pr(t,s(26),s(26)+.3)))+ln(300,gy,1620,gy);
+  const near=ease(pr(t,s(26)-.2,s(26)+.9));
+  const lx=lerp(560,810,near), rx=lerp(1360,1110,near);
+  const wallDrop=ease(pr(t,e(25)-.15,e(25)+.35));
+  const wa=pr(t,s(22),s(22)+.3)*(1-wallDrop);
+  const red=pr(t,w(25,5)-.05,w(25,5)+.2), wc=red>.5?C.red:C.line;
+  if(wa>0){let wg=rect(930,gy-330,60,330,{fill:C.panel,c:wc});
+    for(let i=1;i<8;i++){wg+=ln(930,gy-330+i*41,990,gy-330+i*41,{c:wc,w:1.8});wg+=ln(i%2?960:945,gy-330+(i-1)*41,i%2?960:945,gy-330+i*41,{c:wc,w:1.8})}
+    g+=grp(wa,wg,`translate(0 ${wallDrop*60})`);
+    g+=txt(960,gy-356,'critical barrier',{size:30,c:C.red,weight:500,a:red*(1-wallDrop)});}
+  const talk=pr(t,s(26),s(26)+.3);
+  const wave=Math.sin(t*5)*.5+.5;
+  g+=stick(lx,gy,1,{look:1,mood:lerp(0,1,near),walk:near*8,armR:near>.9?[lerp(46,84,wave*talk),lerp(92,10,talk)]:undefined});
+  g+=stick(rx,gy,1,{look:-1,mood:lerp(0,1,near),walk:near*8,armL:near>.9?[-lerp(46,84,(1-wave)*talk),lerp(92,10,talk)]:undefined});
+  // hesitant "..." before the barrier breaks
+  const hes=pr(t,s(23),s(23)+.2)*(1-pr(t,s(25),s(25)+.3));
+  for(let i=0;i<3;i++){g+=circ(lx+70+i*20,gy-300,4,{fill:C.line,w:0,a:hes*pr(t,s(23)+i*.15,s(23)+i*.15+.1)});g+=circ(rx-110+i*20,gy-300,4,{fill:C.line,w:0,a:hes*pr(t,s(24)+i*.15,s(24)+i*.15+.1)})}
+  // bubbles after
+  const B=[[lx-40,gy-330,150,74,0,1,2],[rx+40,gy-330,150,74,.45,0,2],[lx+10,gy-430,190,90,.95,1,3],[rx-10,gy-430,190,90,1.45,0,3],[960,gy-560,230,96,2.0,1,3]];
+  for(const b of B){const ba=easeOut(pr(t,s(26)+.5+b[4],s(26)+.7+b[4]));g+=bubble(b[0],b[1]-(1-ba)*-14,b[2],b[3],ba,b[5],b[6])}
+  return g;
+}
+function sceneMoney(t){
+  let g=label('Compound interest',pr(t,s(28)-.05,s(28)+.2),{y:150});
+  const gx=560,gy=830,gw=840,gh=540,maxN=30,maxV=950000;
+  let n1 = t<s(31) ? lerp(0,Y400,ease(pr(t,s(29)+.4,e(30)))) : lerp(Y400,30,ease(pr(t,s(31),e(32)+.1)));
+  const G=graph(gx,gy,gw,gh,maxN,maxV,n1,{split:Y400,axes:pr(t,s(28)+.1,s(29)+.2)});
+  g+=G.g;
+  const pa=pr(t,s(29),s(29)+.3);
+  g+=txt(gx+40,gy-gh+10,'$25k to start',{anchor:'start',size:28,c:C.mid,a:pa})+txt(gx+40,gy-gh+50,'+ $6k a year',{anchor:'start',size:28,c:C.mid,a:pa})+txt(gx+40,gy-gh+90,'8% a year',{anchor:'start',size:28,c:C.mid,a:pa});
+  for(const n of [10,20,30]) g+=txt(G.X(n),gy+42,n+' yrs',{size:24,c:C.mid,a:pa})+ln(G.X(n),gy,G.X(n),gy+10,{a:pa});
+  for(const v of [400000,800000]) g+=txt(gx-18,G.Yv(v)+8,'$'+v/1000+'k',{anchor:'end',size:24,c:C.mid,a:pa})+ln(gx-8,G.Yv(v),gx,G.Yv(v),{a:pa});
+  const ca=pr(t,w(30,5),w(30,5)+.25);
+  if(ca>0){const x=G.X(Y400),y=G.Yv(400000);g+=circ(x,y,9,{fill:C.dark,c:C.dark,a:ca})+circ(x,y,30,{c:C.red,w:3,a:ca});
+    g+=txt(x-44,y-34,'a chunk of money',{anchor:'end',size:30,c:C.red,weight:500,a:ca})}
+  const ea=pr(t,w(31,3),w(31,3)+.25);
+  g+=txt(G.X(27)+30,G.Yv(V(27))+40,'easier',{anchor:'start',size:34,c:C.red,weight:600,a:ea});
+  return g;
+}
+function barbell(x,y,k,plates,c){let g=ln(x-150*k,y,x+150*k,y,{c,w:4});
+  for(let i=0;i<plates;i++){g+=rect(x-118*k-i*17*k-12*k,y-(46-i*5)*k,12*k,(92-i*10)*k,{rx:3,fill:C.panel,c});g+=rect(x+118*k+i*17*k,y-(46-i*5)*k,12*k,(92-i*10)*k,{rx:3,fill:C.panel,c})}return g}
+function sceneFit(t){
+  const gy=770; let g=label('Fitness',pr(t,s(33),s(33)+.2),{y:150});
+  g+=ln(330,gy,1590,gy,{a:pr(t,s(34)-.2,s(34))});
+  const X=[520,930,1370], ages=['15','17','22'], T=[w(34,1)-.1, w(36,5)-.1, w(38,3)-.1];
+  for(let i=0;i<3;i++){const al=pr(t,T[i],T[i]+.2); g+=ln(X[i],gy,X[i],gy+14,{a:al})+txt(X[i],gy+58,'age '+ages[i],{size:32,c:C.dark,weight:500,a:al})}
+  // 15: scrawny
+  g+=stick(X[0],gy,.78,{a:pr(t,T[0],T[0]+.2),mood:.6, armL:[-40,lerp(92,-70,ease(pr(t,s(35)+.2,s(35)+.6)))], armR:[40,lerp(92,-70,ease(pr(t,s(35)+.2,s(35)+.6)))]});
+  g+=txt(X[0],gy-310,'calisthenics',{size:28,c:C.mid,a:pr(t,w(35,4),w(35,4)+.2)*(1-pr(t,s(36)-.2,s(36)+.1))});
+  // 17 and 22 with barbells
+  const lift=(i,tn,num)=>{const al=pr(t,T[i],T[i]+.2), up=ease(pr(t,tn-.25,tn+.15)); const by=gy-lerp(250,372,up);
+    let q=stick(X[i],gy,1,{a:al,armL:[-70,(by+14)-(gy-204)],armR:[70,(by+14)-(gy-204)],mood:1});
+    q+=grp(al,barbell(X[i],by,1,2,C.line)); q+=txt(X[i],by-70,num,{size:54,weight:700,c:C.dark,a:pr(t,tn-.05,tn+.15)}); return q};
+  g+=lift(1,w(37,3),'220'); g+=lift(2,w(39,4),'225');
+  // critical line
+  const cl=ease(pr(t,w(40,3),w(40,3)+.6)), cy=gy-372;
+  g+=path(`M330 ${cy} L${lerp(330,1590,cl)} ${cy}`,{c:C.red,w:3,dash:'10 10',a:cl>0?1:0});
+  g+=txt(350,cy-18,'critical line',{anchor:'start',size:30,c:C.red,weight:500,a:pr(t,w(40,3)+.3,w(40,3)+.5)});
+  // "so much more": faint ghost stack of extra plates climbing
+  const more=pr(t,s(41),s(42)+.2), mo=1-pr(t,s(43)-.1,s(43)+.3);
+  for(let i=0;i<3;i++){const al=pr(more,i*.3,i*.3+.15)*mo*.9; g+=grp(al,barbell(1370,cy-176-i*42,.8,2+i,'#B4B5B3'))}
+  g+=txt(1600,cy-190,'so much more',{anchor:'start',size:30,c:C.mid,a:pr(t,w(42,4),w(42,4)+.2)*mo});
+  g+=arrow(1575,cy-130,1575,cy-260,{c:C.mid,a:pr(t,w(42,4),w(42,4)+.2)*mo,p:ease(pr(t,w(42,4),w(42,4)+.5))});
+  const ja=pr(t,w(44,3),w(44,3)+.2);
+  g+=txt(1650,cy+70,'judo',{size:40,weight:600,c:C.dark,a:ja})+txt(1650,cy+114,'2–3× a week',{size:30,c:C.mid,a:pr(t,s(45),s(45)+.25)});
+  g+=arrow(1500,cy+2,1790,cy+2,{c:C.red,w:3,a:ja,p:ease(pr(t,w(44,3),e(45)))});
+  return g;
+}
+function sceneYT(t){
+  const gy=790; let g=ln(300,gy,1620,gy);
+  const esc=ease(pr(t,w(51,3),e(52)));
+  g+=stick(520,gy,1,{look:1,armR:[92,lerp(40,-60,esc)],armL:[-46,lerp(92,-60,esc)],mood:1});
+  g+=txt(520,gy+56,'Developed by Ed',{size:28,c:C.mid,a:pr(t,s(46)+.1,s(46)+.4)});
+  // player
+  const px=640,py=gy-420,pw=330,ph=200;
+  g+=rect(px,py,pw,ph,{rx:10,fill:C.panel})+path(`M${px+pw/2-22} ${py+ph/2-28} L${px+pw/2+30} ${py+ph/2} L${px+pw/2-22} ${py+ph/2+28} Z`,{fill:C.red,c:C.red});
+  const cnt=Math.round(lerp(50,900,ease(pr(t,s(47)-.1,e(47)+.1))));
+  g+=txt(px+pw/2,py+ph+70,cnt+'k',{size:64,weight:700,c:cnt>=900?C.red:C.dark,a:pr(t,w(46,6)-.2,w(46,6))});
+  // iterations grid
+  const gx0=1090,gy0=gy-520,cols=6,rows=5, n=Math.floor(lerp(0,cols*rows,pr(t,w(48,3)-.1,e(49)+.6)));
+  for(let i=0;i<n;i++){const c=i%cols,r=Math.floor(i/cols);g+=rect(gx0+c*84,gy0+(rows-1-r)*62,70,46,{rx:5,fill:C.panel,w:2});}
+  g+=txt(gx0+250,gy0-28,'iterations',{size:32,weight:500,c:C.dark,a:pr(t,w(48,3)-.05,w(48,3)+.15)});
+  g+=clock(1680,gy0+40,36,pr(t,w(49,0)-.05,w(49,0)+.15)*(1-pr(t,s(51),s(51)+.3)),ease(pr(t,w(49,1),w(49,1)+.3)));
+  // escape curve
+  const cd=`M${gx0-10} ${gy-70} C ${gx0+260} ${gy-80}, ${gx0+420} ${gy-200}, ${gx0+500} ${gy-560}`;
+  if(esc>0){g+=path(cd,{c:C.red,w:5,p:esc});const q=pointOn(cd,esc);g+=arrow(q.x-Math.cos(q.ang)*4,q.y-Math.sin(q.ang)*4,q.x,q.y,{c:C.red,w:5,head:22})}
+  g+=txt(gx0+250,gy-28,'escape velocity',{size:32,c:C.red,weight:600,a:pr(t,w(51,3)+.2,w(51,3)+.5)});
+  return g;
+}
+function sceneQ(t){
+  const gy=760; let g=ln(300,gy,1620,gy);
+  g+=stick(620,gy,1,{look:1,mood:0,armR:[40,-10]});
+  g+=ball(800,gy-46,46,0);
+  g+=txt(650,gy-330,'?',{size:80,weight:600,c:C.dark,a:pr(t,w(53,1),w(53,1)+.15)});
+  const th=pr(t,w(54,5)-.1,w(54,5)+.3);
+  g+=path(`M1300 ${gy-420} L1300 ${gy}`,{c:C.red,w:3,dash:'10 10',a:th});
+  g+=txt(1300,gy-446,'threshold',{size:32,c:C.red,weight:500,a:th});
+  g+=arrow(880,gy-46,1260,gy-46,{c:C.mid,dash:'4 10',a:th});
+  return g;
+}
+function tuft(x,y,al){return path(`M${x-9} ${y} l4 -16 M${x} ${y} l0 -20 M${x+9} ${y} l-4 -16`,{a:al,w:2.2})}
+const TUFTS=[];(function(){let sd=7;const rnd=()=>(sd=(sd*16807)%2147483647)/2147483647;for(let i=0;i<54;i++){const top=i%2==0;TUFTS.push([180+rnd()*1560,top?200+rnd()*190:700+rnd()*150,rnd()])}})();
+function sceneRoad(t){
+  let g='';const y1=430,y2=650;
+  const ra=pr(t,w(55,5)-.2,w(55,5)+.3);
+  g+=path(`M120 ${y1} L1800 ${y1}`,{p:ra,c:C.dark,w:3})+path(`M120 ${y2} L1800 ${y2}`,{p:ra,c:C.dark,w:3});
+  const ga=pr(t,s(58),e(58));
+  for(const tf of TUFTS) if(!(tf[0]>1470&&tf[0]<1650&&((tf[1]>240&&tf[1]<310)||(tf[1]>780&&tf[1]<850)))) g+=tuft(tf[0],tf[1],pr(ga,tf[2]*.7,tf[2]*.7+.2));
+  g+=txt(1560,y1+44,'pavement',{size:28,c:C.mid,a:pr(t,w(57,2),w(57,2)+.2)});
+  g+=txt(1560,y1-150,'grass',{size:28,c:C.mid,a:pr(t,w(58,4),w(58,4)+.2)})+txt(1560,y2+170,'grass',{size:28,c:C.mid,a:pr(t,w(58,4),w(58,4)+.2)});
+  const fwd=ease(pr(t,s(60),e(60)+.5))*380+ease(pr(t,s(62),e(62)+.8))*760;
+  const bx=440+fwd, by=540;
+  // forward arrow
+  const fa=pr(t,w(56,4)-.1,w(56,4)+.2)*(1-pr(t,s(62),s(62)+.3));
+  g+=arrow(bx+70,by,bx+330,by,{c:C.dark,w:4,head:20,a:fa,p:ease(pr(t,w(56,4)-.1,w(56,4)+.4))});
+  g+=txt(bx+200,by-22,'least friction',{size:28,c:C.dark,a:fa*pr(t,w(56,4),w(56,4)+.2)});
+  // don't get on the grass
+  const da=pr(t,w(61,1),w(61,1)+.2)*(1-pr(t,s(62),s(62)+.3));
+  if(da>0){const d=`M${bx+50} ${by-30} Q${bx+200} ${by-60} ${bx+260} ${by-250}`;g+=path(d,{c:C.red,w:3,dash:'8 10',a:da});
+    const X=[bx+260,by-270];g+=ln(X[0]-22,X[1]-22,X[0]+22,X[1]+22,{c:C.red,w:5,a:da})+ln(X[0]-22,X[1]+22,X[0]+22,X[1]-22,{c:C.red,w:5,a:da})}
+  g+=grp(pr(t,w(55,3)-.1,w(55,3)+.15),ball(bx,by,48,fwd/48,{c:C.dark}));
+  return g;
+}
+function sceneDir(t){
+  let g='';const cx=960,cy=520;
+  g+=ball(cx,cy,48,0,{c:C.dark});
+  for(let i=0;i<8;i++){const an=i*Math.PI/4-Math.PI/2, al=pr(t,s(63)+.25+i*.16,s(63)+.4+i*.16);
+    g+=arrow(cx+Math.cos(an)*78,cy+Math.sin(an)*78,cx+Math.cos(an)*250,cy+Math.sin(an)*250,{c:C.line,a:al,dash:'4 9'});
+    g+=txt(cx+Math.cos(an)*300,cy+Math.sin(an)*300+14,'?',{size:42,weight:500,c:C.mid,a:al})}
+  g+=txt(cx,cy-390,'which way?',{size:40,weight:600,c:C.red,a:pr(t,w(64,4)-.1,w(64,4)+.15)});
+  return g;
+}
+const EDGE=[1000,560], SLOPE_END=[1960,1010];
+function sceneSlope(t){
+  let g='';const gy=EDGE[1];
+  g+=path(`M160 ${gy} L${EDGE[0]} ${gy} L${SLOPE_END[0]} ${SLOPE_END[1]}`,{c:C.dark,w:3,p:pr(t,s(65)-.3,s(65)+.3)});
+  const push=ease(pr(t,s(65),e(65)+.1));
+  const r=50, ang=Math.atan2(SLOPE_END[1]-gy,SLOPE_END[0]-EDGE[0]);
+  const tr=w(67,3)-.15, roll=pr(t,tr,tr+2.6); const dist=roll*roll*1500;
+  let bx,by,rot;
+  const flatX=lerp(520,EDGE[0],push);
+  if(roll<=0){bx=flatX;by=gy-r;rot=(flatX-520)/r}
+  else{bx=EDGE[0]+Math.cos(ang)*dist+Math.sin(ang)*r*clamp(dist/60);by=gy+Math.sin(ang)*dist-r*lerp(1,Math.cos(ang),clamp(dist/60));rot=(EDGE[0]-520+dist)/r}
+  const pushing=t<s(66);
+  const fx=flatX-128;
+  g+=stick(fx,gy,1,{look:1,walk:pushing?flatX/22:0,lean:pushing?30:0,armR:pushing?[104,44]:[46,92],armL:pushing?[88,66]:[-46,92],mood:pushing?-.3:1});
+  const ca=pr(t,w(66,1)-.1,w(66,1)+.2);
+  g+=path(`M${EDGE[0]} ${gy-330} L${EDGE[0]} ${gy}`,{c:C.red,w:3,dash:'10 10',a:ca});
+  g+=txt(EDGE[0],gy-400,'critical mass',{size:34,c:C.red,weight:500,a:ca});
+  g+=txt(EDGE[0],gy-354,'escape velocity',{size:34,c:C.red,weight:600,a:pr(t,w(66,4)-.05,w(66,4)+.2)});
+  g+=ball(bx,by,r,rot,{c:roll>0?C.red:C.dark});
+  for(let i=0;i<3;i++) g+=ln(bx-Math.cos(ang)*(80+i*40)+Math.sin(ang)*(30+i*22),by-Math.sin(ang)*(80+i*40)-Math.cos(ang)*(30+i*22),bx-Math.cos(ang)*(170+i*40)+Math.sin(ang)*(30+i*22),by-Math.sin(ang)*(170+i*40)-Math.cos(ang)*(30+i*22),{c:C.red,a:clamp(roll*4)*.8});
+  return g;
+}
+function sceneEnd(t){
+  const t0=END_CARD+.25, words=['Activation','Energy.'];let sp='';
+  words.forEach((wd,i)=>{const on=pr(t,t0+i*.35,t0+i*.35+.2);const c=on>.5?C.dark:'#B9BAB8';sp+=`<tspan fill="${c}">${wd}${i<words.length-1?' ':''}</tspan>`});
+  let g=`<text x="960" y="545" font-size="76" font-weight="700" text-anchor="middle" letter-spacing="-1">${sp}</text>`;
+  g+=txt(960,620,'lifeofjeso.ca',{size:30,c:C.mid,a:pr(t,t0+.9,t0+1.2)});
+  return g;
+}
+// [startTime, fn]
+const S=[[0,sceneHook],[s(1)-.3,sceneThesis],[s(6)-.3,sceneChem],[s(14)-.35,scenePush],[s(18)-.15,sceneCar],[s(21)-.35,sceneRel],[s(28)-.35,sceneMoney],
+  [s(33)-.3,sceneFit],[s(46)-.35,sceneYT],[s(53)-.3,sceneQ],[s(55)-.3,sceneRoad],[s(63)-.25,sceneDir],[s(65)-.35,sceneSlope],[END_CARD,sceneEnd],[TOTAL+1,null]];
+
+function captions(t){
+  if(t>VOICE_END+.5) return '';
+  let i=-1; for(let k=0;k<L.length;k++) if(t>=L[k].s-.06) i=k;
+  if(i<0) return '';
+  const ln_=L[i], nextS=i+1<L.length?L[i+1].s-.06:1e9;
+  const hold=Math.min(nextS, ln_.e+.9);
+  if(t>hold) return '';
+  const al=Math.min(pr(t,ln_.s-.06,ln_.s+.04), 1-pr(t,hold-.08,hold)*(hold<nextS?1:0));
+  let cur=0; ln_.words.forEach((wd,k)=>{if(t>=wd.s-.03)cur=k});
+  const sp=ln_.words.map((wd,k)=>`<tspan fill="${k===cur?C.dark:'#74767B'}">${wd.w.replace(/&/g,'&amp;')}${k<ln_.words.length-1?' ':''}</tspan>`).join('');
+  return `<text x="960" y="988" font-size="36" font-weight="400" text-anchor="middle" opacity="${al}" xml:space="preserve">${sp}</text>`;
+}
+function render(t){
+  let k=0; while(k+1<S.length && t>=S[k+1][0]) k++;
+  const [st,fn]=S[k], en=S[k+1][0];
+  const al=Math.min(pr(t,st,st+.18), k===S.length-2?1:1-pr(t,en-.14,en));
+  let out=`<rect width="1920" height="1080" fill="${C.bg}"/>`;
+  if(fn) out+=grp(k===0?1-pr(t,en-.14,en):al,fn(t));
+  out+=captions(t);
+  if(t>TOTAL-.4) out+=`<rect width="1920" height="1080" fill="${C.bg}" opacity="${pr(t,TOTAL-.4,TOTAL)}"/>`;
+  document.getElementById('stage').innerHTML=out;
+}
+window.render=render; window.TOTAL=TOTAL; window.SCENES=S.map(x=>x[0]);
+</script></body></html>
