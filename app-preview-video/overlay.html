@@ -1,0 +1,101 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>html,body{margin:0;background:transparent;overflow:hidden}svg{display:block;font-family:'Inter',sans-serif}</style></head>
+<body>
+<svg id="stage" xmlns="http://www.w3.org/2000/svg" width="1080" height="1920" viewBox="0 0 1080 1920"></svg>
+<script>
+// Transparent overlay for the talking-head footage: captions above the head + sparse line drawings.
+const CAP = /*CAPTIONS*/null;
+const C = {dark:'#15161A', red:'#D8455F', halo:'#F6F6F3'};
+const L = CAP.lines, SW = 6;
+const clamp=(x,a=0,b=1)=>Math.min(b,Math.max(a,x)), lerp=(a,b,p)=>a+(b-a)*p;
+const pr=(t,a,b)=>b<=a?(t>=a?1:0):clamp((t-a)/(b-a));
+const ease=p=>{p=clamp(p);return p<.5?4*p*p*p:1-Math.pow(-2*p+2,3)/2}, easeOut=p=>1-Math.pow(1-clamp(p),3);
+const has=i=>L.some(l=>l.id===i), get=i=>L.find(l=>l.id===i);
+const s=i=>get(i).s, e=i=>get(i).e, w=(i,k)=>get(i).words[k].s;
+const after=i=>{const k=L.indexOf(get(i));return k+1<L.length?L[k+1].s:CAP.duration};   // start of the line after line i
+const TOTAL=CAP.duration;
+
+const path=(d,o={})=>{const p=o.p===undefined?1:clamp(o.p);if(p<=0)return'';return `<path d="${d}" fill="${o.fill||'none'}" stroke="${o.c||C.dark}" stroke-width="${o.w||SW}" stroke-linecap="round" stroke-linejoin="round" opacity="${o.a===undefined?1:o.a}" ${p<1?`pathLength="1" stroke-dasharray="1 2" stroke-dashoffset="${1-p}"`:''}/>`};
+const circ=(x,y,r,o={})=>`<circle cx="${x}" cy="${y}" r="${r}" fill="${o.fill||'none'}" stroke="${o.c||C.dark}" stroke-width="${o.w===undefined?SW:o.w}" opacity="${o.a===undefined?1:o.a}"/>`;
+const txt=(x,y,str,o={})=>`<text x="${x}" y="${y}" font-size="${o.size||40}" font-weight="${o.weight||600}" fill="${o.c||C.dark}" text-anchor="middle" opacity="${o.a===undefined?1:o.a}" stroke="${C.halo}" stroke-width="8" stroke-linejoin="round" paint-order="stroke" ${o.italic?'font-style="italic"':''}>${str}</text>`;
+// every drawing gets a soft light halo so it reads over the wall, the jacket or the poster
+const grp=(alpha,inner,tf)=>alpha<=0?'':`<g opacity="${clamp(alpha)}" ${tf?`transform="${tf}"`:''} style="filter:drop-shadow(0 0 3px ${C.halo}) drop-shadow(0 0 3px ${C.halo}) drop-shadow(0 0 2px ${C.halo})">${inner}</g>`;
+const vis=(t,a,b,fi=.18,fo=.22)=>Math.min(pr(t,a,a+fi),1-pr(t,b-fo,b));
+
+// ---- drawings ----
+function book(t,t0,t1){ // open book, left of the head
+  const al=vis(t,t0,t1); if(al<=0)return''; const x=190,y=790,p=ease(pr(t,t0,t0+.55));
+  let g=path(`M${x} ${y-70} C${x-40} ${y-96} ${x-100} ${y-96} ${x-140} ${y-80} L${x-140} ${y+60} C${x-100} ${y+44} ${x-40} ${y+44} ${x} ${y+70} Z`,{p,fill:p>=1?C.halo:'none'});
+  g+=path(`M${x} ${y-70} C${x+40} ${y-96} ${x+100} ${y-96} ${x+140} ${y-80} L${x+140} ${y+60} C${x+100} ${y+44} ${x+40} ${y+44} ${x} ${y+70} Z`,{p,fill:p>=1?C.halo:'none'});
+  const q=pr(t,t0+.45,t0+.8);
+  for(let i=0;i<3;i++){g+=path(`M${x-116} ${y-48+i*30} C${x-90} ${y-58+i*30} ${x-50} ${y-58+i*30} ${x-24} ${y-40+i*30}`,{p:pr(q,i*.25,i*.25+.4),w:3.5,a:.75});
+    g+=path(`M${x+24} ${y-40+i*30} C${x+50} ${y-58+i*30} ${x+90} ${y-58+i*30} ${x+116} ${y-48+i*30}`,{p:pr(q,i*.25+.1,i*.25+.5),w:3.5,a:.75})}
+  g+=txt(x,y+128,'Symposium',{size:44,weight:700,italic:true,a:pr(t,t0+.35,t0+.6)});
+  g+=txt(x,y+176,'Plato',{size:34,weight:500,a:pr(t,t0+.55,t0+.8)});
+  return grp(al,g,'translate(26 150) scale(.8)');   // kept clear of the face when he leans in with the real book
+}
+const HEART='M0 34 C-70 -14 -44 -62 0 -30 C44 -62 70 -14 0 34 Z', INF='M0 0 C-30 -44 -84 -44 -84 0 C-84 44 -30 44 0 0 C30 -44 84 -44 84 0 C84 44 30 44 0 0';
+function loveForever(t,tHeart,tInf,tImm,t1){ // heart -> infinity, left of the head
+  const al=vis(t,tHeart,t1); if(al<=0)return''; let g='';
+  const beat=1+.06*Math.sin((t-tHeart)*7)*pr(t,tHeart+.4,tHeart+.6);
+  g+=`<g transform="translate(190 720) scale(${1.45*beat})">${path(HEART,{p:ease(pr(t,tHeart,tHeart+.5)),c:C.red,w:SW/1.45})}</g>`;
+  const pi=ease(pr(t,tInf,tInf+.6)), imm=pr(t,tImm,tImm+.2), pulse=1+.08*Math.sin((t-tImm)*8)*imm;
+  if(pi>0){g+=path('M190 790 L190 836 M176 820 L190 838 L204 820',{a:pr(t,tInf-.1,tInf+.1),w:4.5});
+    g+=`<g transform="translate(190 900) scale(${1.25*pulse})">${path(INF,{p:pi,c:imm>.5?C.red:C.dark,w:(imm>.5?SW+2:SW)/1.25})}</g>`;
+    g+=txt(190,1000,'forever',{size:36,weight:600,a:pr(t,tInf+.35,tInf+.6)*(1-imm)})+txt(190,1000,'immortal',{size:36,weight:700,c:C.red,a:imm})}
+  return grp(al,g);
+}
+function person(x,y,k,dot,o={}){ // head + shoulders outline; dot = 'head' | 'body' | null
+  const a=o.a===undefined?1:o.a, dp=o.dot===undefined?1:o.dot, pp=o.p===undefined?1:o.p;
+  let g=path(`M${x-58*k} ${y+78*k} Q${x-58*k} ${y-6*k} ${x} ${y-6*k} Q${x+58*k} ${y-6*k} ${x+58*k} ${y+78*k}`,{p:pp,fill:pp>=1?C.halo:'none'})+(pp>.5?circ(x,y-48*k,32*k,{fill:C.halo}):'');
+  if(dot&&dp>0){const dy=dot==='head'?y-48*k:y+36*k, r=(dot==='head'?13:20)*k*(.6+.4*easeOut(dp))*(1+.12*Math.sin(o.t*8)*(o.pulse||0));g+=circ(x,dy,r,{fill:C.red,c:C.red,w:0,a:dp})}
+  return grp(a,g);
+}
+function twoTypes(t,t0,tHead,tBody,t1,o={}){ // two outlines above the captions; red dot in the head / in the body
+  const al=vis(t,t0,t1); if(al<=0)return''; let g='';
+  const hx=430,bx=650,y=300, focusH=o.focusHead===undefined?0:pr(t,o.focusHead,o.focusHead+.25), focusB=o.focusBody===undefined?0:pr(t,o.focusBody,o.focusBody+.25)*(1-focusH);
+  g+=person(hx,y,1,'head',{p:ease(pr(t,t0,t0+.4)),dot:pr(t,tHead,tHead+.2),a:lerp(1,.4,focusB),t,pulse:focusH});
+  g+=person(bx,y,1,'body',{p:ease(pr(t,t0+.12,t0+.52)),dot:pr(t,tBody,tBody+.2),a:lerp(1,.4,focusH),t,pulse:focusB});
+  if(o.kids!==undefined){const k=easeOut(pr(t,o.kids,o.kids+.3)); if(k>0) g+=grp(k*lerp(1,.4,focusH),person(770,y+38-(1-k)*-20,.5,null)+person(840,y+50,.38,null))}
+  return grp(al,g);
+}
+function bulbShape(x,y,k,lit){ let g=path(`M${x-22*k} ${y+34*k} C${x-22*k} ${y+12*k} ${x-46*k} ${y+4*k} ${x-46*k} ${y-26*k} A${46*k} ${46*k} 0 1 1 ${x+46*k} ${y-26*k} C${x+46*k} ${y+4*k} ${x+22*k} ${y+12*k} ${x+22*k} ${y+34*k} Z`,{fill:lit>.5?'#FBE3E7':C.halo,c:lit>.5?C.red:C.dark,w:SW});
+  g+=path(`M${x-20*k} ${y+50*k} L${x+20*k} ${y+50*k} M${x-13*k} ${y+65*k} L${x+13*k} ${y+65*k}`,{c:lit>.5?C.red:C.dark})+path(`M${x-14*k} ${y-18*k} L${x} ${y+2*k} L${x+14*k} ${y-18*k}`,{w:4,c:lit>.5?C.red:C.dark});
+  return g}
+function rays(x,y,k,n,alpha,rot=0){let g='';for(let i=0;i<n;i++){const an=rot+Math.PI+i*Math.PI/(n-1);g+=path(`M${x+Math.cos(an)*66*k} ${y-26*k+Math.sin(an)*66*k} L${x+Math.cos(an)*92*k} ${y-26*k+Math.sin(an)*92*k}`,{c:C.red,w:5,a:alpha})}return g}
+function idea(t,t0,tSend,tLand,t1){ // lightbulb pops beside the outlines, then travels to the viewer on the last line
+  const al=vis(t,t0,t1,.15,.3); if(al<=0)return'';
+  const pop=easeOut(pr(t,t0,t0+.28)), mv=tSend===undefined?0:ease(pr(t,tSend,tLand)), land=tLand===undefined?0:pr(t,tLand,tLand+.15);
+  const P0=[230,300], P1=[70,1050], P2=[540,1690], u=mv;
+  const x=(1-u)*(1-u)*P0[0]+2*(1-u)*u*P1[0]+u*u*P2[0], y=(1-u)*(1-u)*P0[1]+2*(1-u)*u*P1[1]+u*u*P2[1];
+  const k=(.6+.4*pop)*lerp(1,2.1,mv)*(1+.05*Math.sin((t-(tLand||0))*9)*land);
+  let g=bulbShape(x,y,k,land)+rays(x,y,k,5,pr(t,t0+.2,t0+.4)*(mv>0&&land<1?.0:1));
+  if(land>0){const r=pr(t,tLand,tLand+.7); g+=circ(x,y-10*k,(70+r*150)*1,{c:C.red,w:5,a:(1-r)*.9})}
+  return grp(al,g);
+}
+function drawings(t){
+  let g='';
+  if(has(22)) g+=book(t,w(22,0)-.12,after(24)-.05);
+  if(has(31)) g+=loveForever(t,w(31,4)-.1,w(33,4)-.1,w(41,5)-.08,after(52)-.05);
+  if(has(1))  g+=twoTypes(t,0.05,s(2)-.05,w(3,1)-.05,after(3)-.1);                                  // hook of version 1
+  if(has(8))  {const al=vis(t,w(8,2)-.1,after(8)-.1), p=ease(pr(t,w(8,2)-.1,w(8,2)+.45));            // hook of version 3
+               g+=grp(al,`<g transform="translate(540 300) scale(1.5)">${path(INF,{p,c:C.red,w:(SW+2)/1.5})}</g>`)}
+  if(has(60)){ const t0=w(60,2)-.1, tH=has(11)?s(11)-.05:s(81)-.05, tB=has(12)?w(12,1)-.05:s(70)+.25;
+    g+=twoTypes(t,t0,tH,tB,s(90)+.15,{kids:w(71,4)-.08,focusBody:s(70),focusHead:s(81)-.05}); }
+  if(has(83)) g+=idea(t,w(83,1)-.08,w(90,3)-.05,w(92,0)-.03,TOTAL+1);
+  if(has(6)){ const t0=w(6,0)-.1; g+=idea(t,t0,undefined,undefined,after(6)-.1) }                    // hook of version 2
+  return g;
+}
+function captions(t){
+  let i=-1; for(let k=0;k<L.length;k++) if(t>=L[k].s-.06) i=k;
+  if(i<0) return '';
+  const ln=L[i], nextS=i+1<L.length?L[i+1].s-.06:1e9, hold=Math.min(nextS,ln.e+.7);
+  if(t>hold) return '';
+  let cur=0; ln.words.forEach((wd,k)=>{if(t>=wd.s-.03)cur=k});
+  const sp=ln.words.map((wd,k)=>`<tspan fill="${k===cur?C.red:C.dark}">${wd.w.replace(/&/g,'&amp;')}${k<ln.words.length-1?' ':''}</tspan>`).join('');
+  return `<text x="540" y="522" font-size="56" font-weight="700" text-anchor="middle" letter-spacing="-0.5" stroke="${C.halo}" stroke-width="12" stroke-linejoin="round" paint-order="stroke" xml:space="preserve">${sp}</text>`;
+}
+function render(t){ document.getElementById('stage').innerHTML=drawings(t)+captions(t) }
+window.render=render; window.TOTAL=TOTAL;
+</script></body></html>
