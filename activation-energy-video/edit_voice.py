@@ -1,9 +1,10 @@
 """Cut the voice memo into the punchy edit. Outputs build/voice_edit.wav + build/timeline.json"""
-import json, wave, sys, numpy as np
+import json, wave, sys, os, numpy as np
+BUILD=os.environ.get("BUILD","build"); SHORT=os.environ.get("MODE")=="short"
 SR=48000
 SP=sys.argv[1]
-w=wave.open("build/voice_clean.wav"); a=np.frombuffer(w.readframes(w.getnframes()),dtype=np.int16).astype(np.float32)/32768
-words=[x for s in json.load(open(SP+"/voice_words.json")) for x in s["words"]]
+w=wave.open(BUILD+"/voice_clean.wav"); a=np.frombuffer(w.readframes(w.getnframes()),dtype=np.int16).astype(np.float32)/32768
+words=[x for s in json.load(open("voice_words.json")) for x in s["words"]]
 # (section, start, end) in source seconds, from the word-level transcript
 CLIPS=[
  ("hook",261.94,264.95),
@@ -16,6 +17,9 @@ CLIPS=[
  ("yt",138.72,143.25),("yt",147.18,158.25),
  ("ball",168.72,173.95),("ball",174.24,181.95),("ball",187.30,192.62),("ball",215.16,219.70),("ball",230.24,237.45),
 ]
+if SHORT:  # 60-second Instagram cut: only the punchiest lines
+    CLIPS=[("hook",261.94,264.95),("thesis",0.66,8.05),("chem",17.68,23.20),("phys",24.14,24.80),("phys",31.22,35.95),
+     ("yt",138.72,143.25),("yt",147.18,151.05),("ball",171.46,173.95),("ball",174.24,176.60),("ball",187.30,190.95),("ball",215.16,219.70),("ball",230.24,237.45)]
 hop=int(SR*0.01)
 env=np.array([np.sqrt(np.mean(a[i:i+hop*2]**2)+1e-12) for i in range(0,len(a)-hop*2,hop)])
 db=20*np.log10(env+1e-9)
@@ -45,7 +49,7 @@ def fade(x,n=int(SR*0.012)):
     x=x.copy(); n=min(n,len(x)//2); r=np.linspace(0,1,n); x[:n]*=r; x[-n:]*=r[::-1]; return x
 for sec,s,e in CLIPS:
     s2=snap(s,"start"); e2=snap(e,"end")
-    gap = 0 if prev is None else (1.5 if sec=="thesis" else 0.55 if sec!=prev else 0.24)
+    gap = 0 if prev is None else ((1.25 if SHORT else 1.5) if sec=="thesis" else (0.42 if SHORT else 0.55) if sec!=prev else (0.2 if SHORT else 0.24))
     if gap: out.append(np.zeros(int(gap*SR),np.float32)); pos+=gap
     # split clip at long internal pauses and shorten them
     pieces=[]; cur=s2
@@ -75,7 +79,7 @@ for sec,s,e in CLIPS:
             if te is None or te<ts: te=ts+0.25
             ow.append({"w":x["w"].strip(),"s":round(ts,3),"e":round(te,3),"sec":sec,"clip":ci})
     ci+=1
-wo=wave.open("build/voice_edit.wav","w"); wo.setnchannels(1); wo.setsampwidth(2); wo.setframerate(SR)
+wo=wave.open(BUILD+"/voice_edit.wav","w"); wo.setnchannels(1); wo.setsampwidth(2); wo.setframerate(SR)
 wo.writeframes((np.clip(audio,-1,1)*32767).astype(np.int16).tobytes()); wo.close()
-json.dump({"duration":pos,"segs":segs,"words":ow,"clips":timeline},open("build/timeline.json","w"),indent=1)
+json.dump({"duration":pos,"segs":segs,"words":ow,"clips":timeline},open(BUILD+"/timeline.json","w"),indent=1)
 print("duration",pos,"words",len(ow))

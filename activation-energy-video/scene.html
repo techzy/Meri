@@ -10,19 +10,26 @@ svg{display:block;font-family:'Inter',sans-serif}
 <script>
 const CAP = /*CAPTIONS*/null;
 const C = {bg:'#ECEDEA', line:'#85878C', dark:'#15161A', mid:'#6E7075', faint:'#C6C7C5', red:'#D8455F', panel:'#E2E3E0'};
-const SW = 2.6;
+const SW = (CAP.vertical?3.4:2.6);
 const L = CAP.lines;
 const clamp=(x,a=0,b=1)=>Math.min(b,Math.max(a,x));
 const lerp=(a,b,p)=>a+(b-a)*p;
 const ease=p=>{p=clamp(p);return p<.5?4*p*p*p:1-Math.pow(-2*p+2,3)/2};
 const easeOut=p=>1-Math.pow(1-clamp(p),3);
 const easeIn=p=>Math.pow(clamp(p),3);
-const pr=(t,a,b)=>clamp((t-a)/(b-a));
-const s=i=>L[i].s, e=i=>L[i].e;
-const w=(i,k)=>L[i].words[k].s;           // start of k-th word of line i
+const pr=(t,a,b)=>b<=a?(t>=a?1:0):clamp((t-a)/(b-a));
+// Lines are addressed by their number in captions.txt. In a shorter cut some lines are absent:
+// an absent line resolves to just before the next line that is present.
+const VERT=!!CAP.vertical;
+const ID=l=>l.id===undefined?L.indexOf(l):l.id;
+const has=i=>L.some(l=>ID(l)===i);
+const nxt=i=>{const c=L.filter(l=>ID(l)>=i);return c.length?c[0].s-.25:L[L.length-1].e+.5};
+const get=i=>L.find(l=>ID(l)===i);
+const s=i=>has(i)?get(i).s:nxt(i), e=i=>has(i)?get(i).e:nxt(i);
+const w=(i,k)=>has(i)?get(i).words[k].s:nxt(i);           // start of k-th word of line i
 const VOICE_END = L[L.length-1].e;
-const END_CARD = VOICE_END + 2.6;
-const TOTAL = END_CARD + 3.6;
+const END_CARD = VOICE_END + (CAP.tail||2.6);
+const TOTAL = END_CARD + (CAP.card||3.6);
 
 // ---------- primitives ----------
 const a=(v)=>v===undefined?1:v;
@@ -264,7 +271,7 @@ function sceneYT(t){
   const gx0=1090,gy0=gy-520,cols=6,rows=5, n=Math.floor(lerp(0,cols*rows,pr(t,w(48,3)-.1,e(49)+.6)));
   for(let i=0;i<n;i++){const c=i%cols,r=Math.floor(i/cols);g+=rect(gx0+c*84,gy0+(rows-1-r)*62,70,46,{rx:5,fill:C.panel,w:2});}
   g+=txt(gx0+250,gy0-28,'iterations',{size:32,weight:500,c:C.dark,a:pr(t,w(48,3)-.05,w(48,3)+.15)});
-  g+=clock(1680,gy0+40,36,pr(t,w(49,0)-.05,w(49,0)+.15)*(1-pr(t,s(51),s(51)+.3)),ease(pr(t,w(49,1),w(49,1)+.3)));
+  g+=clock(1640,gy0+40,36,pr(t,w(49,0)-.05,w(49,0)+.15)*(1-pr(t,s(51),s(51)+.3)),ease(pr(t,w(49,1),w(49,1)+.3)));
   // escape curve
   const cd=`M${gx0-10} ${gy-70} C ${gx0+260} ${gy-80}, ${gx0+420} ${gy-200}, ${gx0+500} ${gy-560}`;
   if(esc>0){g+=path(cd,{c:C.red,w:5,p:esc});const q=pointOn(cd,esc);g+=arrow(q.x-Math.cos(q.ang)*4,q.y-Math.sin(q.ang)*4,q.x,q.y,{c:C.red,w:5,head:22})}
@@ -344,8 +351,15 @@ function sceneEnd(t){
   return g;
 }
 // [startTime, fn]
-const S=[[0,sceneHook],[s(1)-.3,sceneThesis],[s(6)-.3,sceneChem],[s(14)-.35,scenePush],[s(18)-.15,sceneCar],[s(21)-.35,sceneRel],[s(28)-.35,sceneMoney],
-  [s(33)-.3,sceneFit],[s(46)-.35,sceneYT],[s(53)-.3,sceneQ],[s(55)-.3,sceneRoad],[s(63)-.25,sceneDir],[s(65)-.35,sceneSlope],[END_CARD,sceneEnd],[TOTAL+1,null]];
+// [first line, last line, lead-in, fn]; a scene is dropped when none of its lines are in this cut
+const SDEF=[[1,5,.3,sceneThesis],[6,13,.3,sceneChem],[14,17,.35,scenePush],[18,20,.15,sceneCar],[21,27,.35,sceneRel],[28,32,.35,sceneMoney],
+  [33,45,.3,sceneFit],[46,52,.35,sceneYT],[53,54,.3,sceneQ],[55,62,.3,sceneRoad],[63,64,.25,sceneDir],[65,67,.35,sceneSlope]];
+const S=[[0,sceneHook]];
+for(const [a,b,lead,fn] of SDEF){const c=L.filter(l=>ID(l)>=a&&ID(l)<=b);if(c.length)S.push([c[0].s-lead,fn])}
+S.push([END_CARD,sceneEnd],[TOTAL+1,null]);
+const W=VERT?1080:1920, H=VERT?1920:1080;
+if(VERT){const st=document.getElementById('stage');st.setAttribute('width',W);st.setAttribute('height',H);st.setAttribute('viewBox',`0 0 ${W} ${H}`)}
+const VS=.74, VTF=`translate(${540-960*VS} 470) scale(${VS})`;   // 16:9 scene scaled into the middle of the 9:16 frame
 
 function captions(t){
   if(t>VOICE_END+.5) return '';
@@ -356,6 +370,12 @@ function captions(t){
   if(t>hold) return '';
   const al=Math.min(pr(t,ln_.s-.06,ln_.s+.04), 1-pr(t,hold-.08,hold)*(hold<nextS?1:0));
   let cur=0; ln_.words.forEach((wd,k)=>{if(t>=wd.s-.03)cur=k});
+  if(VERT){ // bigger type, wrapped onto two balanced lines when long
+    const ws=ln_.words, len=ws.reduce((n,x)=>n+x.w.length+1,0); let brk=ws.length;
+    if(len>24){let run=0,best=1e9;ws.forEach((x,k)=>{run+=x.w.length+1;const d=Math.abs(run-len/2);if(k<ws.length-1&&d<best){best=d;brk=k+1}})}
+    const row=(a,b,y)=>`<text x="540" y="${y}" font-size="58" font-weight="500" text-anchor="middle" opacity="${al}" xml:space="preserve">`+ws.slice(a,b).map((wd,k)=>`<tspan fill="${a+k===cur?C.dark:'#74767B'}">${wd.w.replace(/&/g,'&amp;')}${a+k<b-1?' ':''}</tspan>`).join('')+'</text>';
+    return brk<ws.length?row(0,brk,1400)+row(brk,ws.length,1474):row(0,ws.length,1436);
+  }
   const sp=ln_.words.map((wd,k)=>`<tspan fill="${k===cur?C.dark:'#74767B'}">${wd.w.replace(/&/g,'&amp;')}${k<ln_.words.length-1?' ':''}</tspan>`).join('');
   return `<text x="960" y="988" font-size="36" font-weight="400" text-anchor="middle" opacity="${al}" xml:space="preserve">${sp}</text>`;
 }
@@ -363,10 +383,10 @@ function render(t){
   let k=0; while(k+1<S.length && t>=S[k+1][0]) k++;
   const [st,fn]=S[k], en=S[k+1][0];
   const al=Math.min(pr(t,st,st+.18), k===S.length-2?1:1-pr(t,en-.14,en));
-  let out=`<rect width="1920" height="1080" fill="${C.bg}"/>`;
-  if(fn) out+=grp(k===0?1-pr(t,en-.14,en):al,fn(t));
+  let out=`<rect width="${W}" height="${H}" fill="${C.bg}"/>`;
+  if(fn) out+=grp(k===0?1-pr(t,en-.14,en):al,fn(t),VERT?(fn===sceneEnd?'translate(-516 330) scale(1.1)':VTF):undefined);
   out+=captions(t);
-  if(t>TOTAL-.4) out+=`<rect width="1920" height="1080" fill="${C.bg}" opacity="${pr(t,TOTAL-.4,TOTAL)}"/>`;
+  if(t>TOTAL-.4) out+=`<rect width="${W}" height="${H}" fill="${C.bg}" opacity="${pr(t,TOTAL-.4,TOTAL)}"/>`;
   document.getElementById('stage').innerHTML=out;
 }
 window.render=render; window.TOTAL=TOTAL; window.SCENES=S.map(x=>x[0]);

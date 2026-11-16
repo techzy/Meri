@@ -1,10 +1,14 @@
 """Original backing track, synthesised from scratch (no samples, nothing licensed). Output: build/music.wav"""
-import json, wave, numpy as np
+import json, wave, os, numpy as np
+BUILD=os.environ.get("BUILD","build")
 SR=48000
-cap=json.load(open("build/captions.json")); L=cap["lines"]
-s=lambda i:L[i]["s"]
-VOICE_END=L[-1]["e"]; END_CARD=VOICE_END+2.6; TOTAL=END_CARD+3.6
-ROLL=L[67]["words"][3]["s"]-0.15          # the ball starts rolling
+cap=json.load(open(BUILD+"/captions.json")); L=cap["lines"]
+def line(i):   # look a caption line up by id; a line missing from a shorter cut resolves to the next one present
+    c=[l for l in L if l.get("id",L.index(l))>=i]
+    return c[0] if c else L[-1]
+s=lambda i:line(i)["s"]-(0 if line(i).get("id",i)==i else .25)
+VOICE_END=L[-1]["e"]; END_CARD=VOICE_END+cap.get("tail",2.6); TOTAL=END_CARD+cap.get("card",3.6)
+ROLL=line(67)["words"][3]["s"]-0.15          # the ball starts rolling
 REVEAL=L[0]["e"]+0.85                      # "8 years" lands
 N=int((TOTAL+0.5)*SR); out=np.zeros((N,2),np.float32)
 BEAT=60/96; BAR=4*BEAT
@@ -47,20 +51,21 @@ for b in range(-2,bars):
     sec = ("hook" if t0<T0 else "intro" if t0<s(6)-.3 else "ex1" if t0<s(33)-.3 else "ex2" if t0<s(53)-.3 else
            "ask" if t0<s(65)-.35 else "build" if t0<ROLL else "lift")
     if b%2==0:
-        for m in notes: add(pad(m,2*BAR+1.6),t0,{"hook":.05,"intro":.045,"ex1":.04,"ex2":.04,"ask":.05,"build":.055,"lift":.06}[sec],pan=(m%5-2)*.2)
-        if sec in("ex1","ex2","build","lift"): add(bass(root-12 if root>43 else root,2*BAR*0.96),t0,{"ex1":.16,"ex2":.2,"build":.2,"lift":.26}[sec])
+        for m in notes: add(pad(m,2*BAR+1.6),t0,{"hook":.07,"intro":.06,"ex1":.045,"ex2":.04,"ask":.05,"build":.055,"lift":.06}[sec],pan=(m%5-2)*.2)
+        if sec in("intro","ex1","ex2","build","lift"): add(bass(root-12 if root>43 else root,2*BAR*0.96),t0,{"intro":.16,"ex1":.18,"ex2":.2,"build":.2,"lift":.26}[sec])
     for k in range(8):
         tk=t0+k*BEAT/2
         if tk>TOTAL-1.2: continue
         if sec in("intro","ex1","ex2","lift") or (sec=="build" and k%2==0) or (sec=="ask" and k in(0,3,6)):
             m=notes[ARP[k]]+(12 if sec=="lift" else 0)
-            add(pluck(m),tk,{"intro":.10,"ex1":.11,"ex2":.12,"ask":.09,"build":.11,"lift":.14}[sec],pan=.35*(1 if k%2 else -1))
+            add(pluck(m),tk,{"intro":.14,"ex1":.13,"ex2":.12,"ask":.10,"build":.11,"lift":.14}[sec],pan=.35*(1 if k%2 else -1))
             if sec=="lift" and k%2==0: add(pluck(m-12,1.4,.15),tk,.08)
         if sec in("ex2","lift") and k%2==1: add(shaker(),tk,.035 if sec=="ex2" else .05,pan=.3)
         if sec in("ex1","ex2","lift") and k in(0,5): add(kick(),tk,{"ex1":.22,"ex2":.3,"lift":.38}[sec])
         if sec=="build": add(kick(),tk,.12+.2*(tk-(s(65)-.35))/max(.1,ROLL-(s(65)-.35)))
 # hook: one held chord, then a hit when "8 years" lands
-for m in (45,57,60,64): add(pad(m,T0+1.5),0,.05)
+for m in (45,57,60,64): add(pad(m,T0+1.5),0,.08)
+for k,m in enumerate((57,64,60,69,64,72)): add(pluck(m),0.15+k*BEAT/2,.12,pan=.3*(1 if k%2 else -1))   # music is there from the first second
 for m,d in ((57,0),(64,.02),(69,.04),(72,.06)): add(pluck(m,1.8,.5),REVEAL+d,.16)
 add(kick(),REVEAL,.5)
 # riser into the roll + hit on the roll
@@ -75,9 +80,9 @@ for m,d in ((48,0),(60,.01),(64,.02),(67,.03),(72,.04),(76,.05)): add(pluck(m,2.
 for c in range(2):
     acc=0.0; z=out[:,c]
     z[:]=np.convolve(z,np.ones(5)/5,mode="same")
-fo=int(2.6*SR); out[-fo:]*=np.linspace(1,0,fo)[:,None]**1.5
+fo=int(min(2.6,cap.get("card",3.6)*.8)*SR); out[-fo:]*=np.linspace(1,0,fo)[:,None]**1.5
 out[:int(.3*SR)]*=np.linspace(0,1,int(.3*SR))[:,None]
 out/=max(1e-6,np.abs(out).max())/0.85
-w=wave.open("build/music.wav","w"); w.setnchannels(2); w.setsampwidth(2); w.setframerate(SR); w.writeframes((out*32767).astype(np.int16).tobytes()); w.close()
-json.dump({"VOICE_END":VOICE_END,"END_CARD":END_CARD,"TOTAL":TOTAL,"ROLL":ROLL,"REVEAL":REVEAL},open("build/marks.json","w"))
+w=wave.open(BUILD+"/music.wav","w"); w.setnchannels(2); w.setsampwidth(2); w.setframerate(SR); w.writeframes((out*32767).astype(np.int16).tobytes()); w.close()
+json.dump({"VOICE_END":VOICE_END,"END_CARD":END_CARD,"TOTAL":TOTAL,"ROLL":ROLL,"REVEAL":REVEAL},open(BUILD+"/marks.json","w"))
 print("music ok",TOTAL,"roll",ROLL,"reveal",REVEAL)
